@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* ─── Design Tokens ─────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #FAF7F2;
+  --surface: #FFFFFF;
+  --primary: #1C4A3A;
+  --primary-light: #E8F0EC;
+  --accent: #F0C87A;
+  --text-main: #1A1A1A;
+  --text-sub: #6B6B6B;
+  --border: #E5E0D8;
+}
+
+/* ─── Tailwind Theme Mapping ─────────────────────────────────────────────────── */
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-primary: var(--primary);
+  --color-primary-light: var(--primary-light);
+  --color-accent: var(--accent);
+  --color-ink: var(--text-main);
+  --color-muted: var(--text-sub);
+  --color-rim: var(--border);
+
+  --font-serif: var(--font-playfair);
+  --font-sans: var(--font-lato);
+}
+
+/* ─── Base ───────────────────────────────────────────────────────────────────── */
+
+body {
+  background: var(--bg);
+  color: var(--text-main);
+  font-family: var(--font-lato), ui-sans-serif, system-ui, sans-serif;
+}
