@@ -1,10 +1,5 @@
-import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-
-const client = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/v1",
-});
+import { resolveClient } from "../_lib/ai-client";
 
 const VOCAB_PROMPT = `You are a Spanish vocabulary learning assistant designed for Chinese learners of Spanish (A2-B2 level).
 
@@ -28,9 +23,14 @@ Example output format:
   "original_sentence_translation": "原句中文翻译"
 }`;
 
+function extractJson(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return (fenced ? fenced[1] : raw).trim();
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { target_word, original_sentence } = await request.json();
+    const { target_word, original_sentence, apiConfig } = await request.json();
 
     if (!target_word || !original_sentence) {
       return NextResponse.json(
@@ -39,8 +39,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { client, model } = resolveClient(apiConfig);
+
     const response = await client.chat.completions.create({
-      model: "deepseek-chat",
+      model,
       max_tokens: 1024,
       messages: [
         { role: "system", content: VOCAB_PROMPT },
@@ -52,14 +54,21 @@ export async function POST(request: NextRequest) {
     });
 
     const rawText = response.choices[0].message.content ?? "";
-    const vocabCard = JSON.parse(rawText);
+
+    let vocabCard;
+    try {
+      vocabCard = JSON.parse(extractJson(rawText));
+    } catch {
+      throw new Error("模型返回的内容不是有效的 JSON，请检查所选模型是否支持结构化输出");
+    }
 
     return NextResponse.json(vocabCard);
   } catch (error) {
     console.error("词卡生成失败:", error);
-    return NextResponse.json(
-      { error: "词卡生成失败，请重试" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error && error.message.includes("JSON")
+        ? error.message
+        : "词卡生成失败，请检查 API 设置或重试";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

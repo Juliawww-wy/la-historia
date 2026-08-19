@@ -1,10 +1,5 @@
-import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-
-const client = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/v1",
-});
+import { resolveClient } from "../_lib/ai-client";
 
 const QUIZ_PROMPT = `You are a Spanish language quiz generator for Chinese learners.
 
@@ -26,15 +21,18 @@ Return ONLY a JSON object in this exact format, with no explanation, no markdown
   ]
 }`;
 
+function extractJson(raw: string): string {
+  // Some providers wrap JSON in ```json ... ``` even when told not to.
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return (fenced ? fenced[1] : raw).trim();
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { story, words } = await request.json();
+    const { story, words, apiConfig } = await request.json();
 
     if (!story || typeof story !== "string" || story.trim() === "") {
-      return NextResponse.json(
-        { error: "story 不能为空" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "story 不能为空" }, { status: 400 });
     }
     if (!words || !Array.isArray(words) || words.length === 0) {
       return NextResponse.json(
@@ -43,11 +41,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { client, model } = resolveClient(apiConfig);
+
     const userMessage =
       `Story:\n${story}\n\nTarget vocabulary words: ${words.join(", ")}`;
 
     const response = await client.chat.completions.create({
-      model: "deepseek-chat",
+      model,
       max_tokens: 1024,
       messages: [
         { role: "system", content: QUIZ_PROMPT },
@@ -56,14 +56,21 @@ export async function POST(request: NextRequest) {
     });
 
     const rawText = response.choices[0].message.content ?? "";
-    const quiz = JSON.parse(rawText);
+
+    let quiz;
+    try {
+      quiz = JSON.parse(extractJson(rawText));
+    } catch {
+      throw new Error("模型返回的内容不是有效的 JSON，请检查所选模型是否支持结构化输出");
+    }
 
     return NextResponse.json(quiz);
   } catch (error) {
     console.error("题目生成失败:", error);
-    return NextResponse.json(
-      { error: "题目生成失败，请重试" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error && error.message.includes("JSON")
+        ? error.message
+        : "题目生成失败，请检查 API 设置或重试";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

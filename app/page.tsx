@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -28,12 +28,27 @@ interface StoryResponse {
   story: string;
 }
 
+interface ApiConfig {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  label: string;
+}
+
 type Stage = "input" | "select" | "story" | "quiz";
 
 type Token =
   | { kind: "word"; text: string }
   | { kind: "space"; text: string }
   | { kind: "punct"; text: string };
+
+const PRESETS: { label: string; baseURL: string; model: string; hint: string }[] = [
+  { label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", model: "deepseek-chat", hint: "官方性价比之选" },
+  { label: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "质量更稳定" },
+  { label: "Moonshot", baseURL: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", hint: "国内可直连" },
+];
+
+const SETTINGS_KEY = "la-historia:api-config";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,26 +71,82 @@ function findSentenceContaining(story: string, word: string): string {
   return sentences.find((s) => s.toLowerCase().includes(lower)) ?? story;
 }
 
-// ─── Spinner ─────────────────────────────────────────────────────────────────
+function loadApiConfig(): ApiConfig | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    return raw ? (JSON.parse(raw) as ApiConfig) : null;
+  } catch {
+    return null;
+  }
+}
 
-function Spinner() {
+function buildBookmarklet(origin: string): string {
+  const code = `(function(){var s=window.getSelection().toString();if(!s){alert('请先在网页上选中一段西班牙语文本');}else{window.open('${origin}/?text='+encodeURIComponent(s),'_blank');}})();`;
+  return `javascript:${encodeURIComponent(code)}`;
+}
+
+// ─── Small shared pieces ────────────────────────────────────────────────────
+
+function Spinner({ light = false }: { light?: boolean }) {
   return (
-    <div className="w-5 h-5 border-2 border-rim border-t-primary rounded-full animate-spin" />
+    <div
+      className={`w-5 h-5 border-2 rounded-full animate-spin ${
+        light ? "border-white/30 border-t-white" : "border-rim border-t-primary"
+      }`}
+    />
   );
 }
 
-// ─── Shared class strings ────────────────────────────────────────────────────
-
 const btnPrimary =
-  "w-full rounded-[10px] bg-primary hover:bg-[#163828] py-4 text-sm font-semibold text-white transition-colors disabled:opacity-25 active:opacity-80";
+  "w-full rounded-[10px] bg-primary hover:bg-primary-deep py-4 text-sm font-semibold text-white transition-colors disabled:opacity-25 active:opacity-80 shadow-[0_4px_14px_rgba(15,46,34,0.18)]";
+
+const btnGhost =
+  "rounded-[10px] border border-rim bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:border-primary/40 hover:bg-primary-light/40 transition-colors";
 
 const sectionLabel =
   "text-[11px] font-semibold text-muted uppercase tracking-widest";
+
+const fieldClass =
+  "w-full rounded-[8px] border border-rim bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/70 focus:outline-none focus:border-primary/50 transition-colors";
+
+// ─── Header icon buttons (settings / bookmarklet) ───────────────────────────
+
+function IconButton({
+  onClick,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      className="w-9 h-9 flex items-center justify-center rounded-full text-primary/70 hover:text-primary hover:bg-primary-light/60 transition-colors"
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Fixed bottom bar (shared between select & story stages) ───────────────
+
+function BottomBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-gradient-to-t from-bg via-bg/95 to-transparent pt-8 px-5 pb-6">
+      {children}
+    </div>
+  );
+}
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [stage, setStage] = useState<Stage>("input");
+  const [stageKey, setStageKey] = useState(0);
 
   // Stage 1
   const [inputText, setInputText] = useState("");
@@ -84,6 +155,7 @@ export default function Home() {
   const [tokens, setTokens] = useState<Token[]>([]);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
   const [storyLoading, setStoryLoading] = useState(false);
+  const [storyError, setStoryError] = useState<string | null>(null);
 
   // Stage 3
   const [story, setStory] = useState("");
@@ -98,13 +170,46 @@ export default function Home() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [score, setScore] = useState<number | null>(null);
 
+  // Settings / bookmarklet
+  const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
+  const [origin, setOrigin] = useState("");
+
+  // ── Boot: load saved API config, load ?text= from bookmarklet ─────────────
+
+  useEffect(() => {
+    // One-time hydration from localStorage / URL on mount — safe by
+    // construction (empty dep array, runs once), just noisy under the
+    // stricter set-state-in-effect rule.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setApiConfig(loadApiConfig());
+    setOrigin(window.location.origin);
+
+    const params = new URLSearchParams(window.location.search);
+    const incoming = params.get("text");
+    if (incoming && incoming.trim()) {
+      setInputText(incoming);
+      setTokens(tokenize(incoming));
+      setSelectedWords(new Set());
+      setStage("select");
+      setStageKey((k) => k + 1);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  function goToStage(next: Stage) {
+    setStage(next);
+    setStageKey((k) => k + 1);
+  }
+
   // ── Stage 1 → 2 ────────────────────────────────────────────────────────────
 
   function handleStartSelect() {
     if (!inputText.trim()) return;
     setTokens(tokenize(inputText));
     setSelectedWords(new Set());
-    setStage("select");
+    goToStage("select");
   }
 
   // ── Stage 2 ────────────────────────────────────────────────────────────────
@@ -122,6 +227,7 @@ export default function Home() {
   async function handleGenerateStory() {
     if (selectedWords.size === 0 || storyLoading) return;
     setStoryLoading(true);
+    setStoryError(null);
     try {
       const res = await fetch("/api/story", {
         method: "POST",
@@ -130,11 +236,15 @@ export default function Home() {
           words: Array.from(selectedWords),
           level: "B1",
           genre: "故事",
+          apiConfig,
         }),
       });
+      if (!res.ok) throw new Error();
       const data: StoryResponse = await res.json();
       setStory(data.story);
-      setStage("story");
+      goToStage("story");
+    } catch {
+      setStoryError("故事生成失败，请检查网络或 API 设置后重试");
     } finally {
       setStoryLoading(false);
     }
@@ -152,7 +262,7 @@ export default function Home() {
       const res = await fetch("/api/vocab-card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_word: word, original_sentence: sentence }),
+        body: JSON.stringify({ target_word: word, original_sentence: sentence, apiConfig }),
       });
       const data: VocabCard = await res.json();
       setVocabCard(data);
@@ -173,14 +283,14 @@ export default function Home() {
       const res = await fetch("/api/quiz", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, words: Array.from(selectedWords) }),
+        body: JSON.stringify({ story, words: Array.from(selectedWords), apiConfig }),
       });
       const data: QuizResponse = await res.json();
       setQuiz(data.questions);
       setCurrentQuestion(0);
       setAnswers({});
       setScore(null);
-      setStage("quiz");
+      goToStage("quiz");
     } finally {
       setQuizLoading(false);
     }
@@ -205,7 +315,7 @@ export default function Home() {
   // ── Reset ──────────────────────────────────────────────────────────────────
 
   function handleReset() {
-    setStage("input");
+    goToStage("input");
     setInputText("");
     setTokens([]);
     setSelectedWords(new Set());
@@ -218,6 +328,15 @@ export default function Home() {
     setCurrentQuestion(0);
   }
 
+  // ── Settings ───────────────────────────────────────────────────────────────
+
+  function saveSettings(cfg: ApiConfig | null) {
+    setApiConfig(cfg);
+    if (cfg) window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg));
+    else window.localStorage.removeItem(SETTINGS_KEY);
+    setSettingsOpen(false);
+  }
+
   // ── Story Renderer ─────────────────────────────────────────────────────────
 
   function renderStory() {
@@ -227,7 +346,7 @@ export default function Home() {
           <span
             key={i}
             onClick={() => handleWordClick(token.text)}
-            className="underline underline-offset-[3px] decoration-accent decoration-2 cursor-pointer transition-colors"
+            className="ink-squiggle cursor-pointer transition-opacity hover:opacity-70"
           >
             {token.text}
           </span>
@@ -243,10 +362,10 @@ export default function Home() {
     const q = quiz[currentQuestion];
     const answered = answers[currentQuestion];
     const isLast = currentQuestion === quiz.length - 1;
+    const letters = ["A", "B", "C", "D"];
 
     return (
       <div className="flex flex-col gap-5">
-        {/* Progress bar */}
         <div className="flex gap-1.5 mb-1">
           {quiz.map((_, i) => (
             <div
@@ -266,24 +385,30 @@ export default function Home() {
           第 {currentQuestion + 1} 题，共 {quiz.length} 题
         </p>
 
-        <p className="text-base font-medium text-ink leading-7">{q.sentence}</p>
+        <p className="font-serif text-lg font-medium text-ink leading-8">{q.sentence}</p>
 
         <div className="flex flex-col gap-2.5">
-          {q.options.map((option) => {
+          {q.options.map((option, oi) => {
             let cls =
-              "w-full text-left rounded-[8px] border px-4 py-3.5 text-sm font-medium transition-colors ";
+              "w-full flex items-center gap-3 text-left rounded-[10px] border px-4 py-3.5 text-sm font-medium transition-colors ";
+            let badgeCls =
+              "w-6 h-6 shrink-0 flex items-center justify-center rounded-full text-[11px] font-bold border ";
             if (!answered) {
-              cls +=
-                "border-rim text-ink hover:bg-primary-light/30 active:bg-primary-light/50";
+              cls += "border-rim text-ink hover:border-primary/40 hover:bg-primary-light/30";
+              badgeCls += "border-rim text-muted";
             } else if (option === q.answer) {
-              cls += "border-green-400 bg-[#E8F5E9] text-green-700";
+              cls += "border-primary/50 bg-primary-light text-primary-deep";
+              badgeCls += "border-primary bg-primary text-white";
             } else if (option === answered) {
-              cls += "border-red-300 bg-[#FFEBEE] text-red-500";
+              cls += "border-[#D98572] bg-[#FBEBE7] text-[#B0503A]";
+              badgeCls += "border-[#D98572] bg-[#D98572] text-white";
             } else {
               cls += "border-rim/30 text-muted/40";
+              badgeCls += "border-rim/30 text-muted/30";
             }
             return (
               <button key={option} onClick={() => handleAnswer(option)} className={cls}>
+                <span className={badgeCls}>{letters[oi]}</span>
                 {option}
               </button>
             );
@@ -291,7 +416,7 @@ export default function Home() {
         </div>
 
         {answered && (
-          <button onClick={handleNextOrScore} className={btnPrimary}>
+          <button onClick={handleNextOrScore} className={`${btnPrimary} pop-enter`}>
             {isLast ? "查看得分" : "下一题"}
           </button>
         )}
@@ -299,37 +424,53 @@ export default function Home() {
     );
   }
 
-  // ─── Fixed bottom bar (shared between select & story stages) ─────────────
-
-  function BottomBar({ children }: { children: React.ReactNode }) {
-    return (
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-bg/95 backdrop-blur border-t border-rim px-5 py-4">
-        {children}
-      </div>
-    );
-  }
-
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-bg flex justify-center">
+    <div className="paper-grain min-h-screen bg-bg flex justify-center">
       <div className="w-full max-w-[430px] flex flex-col min-h-screen relative">
+
+        {/* Header: settings + bookmarklet, present on every stage */}
+        <div className="absolute top-4 right-4 z-20 flex gap-1">
+          <IconButton label="划词导入工具" onClick={() => setBookmarkletOpen(true)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" strokeLinejoin="round" strokeLinecap="round" />
+            </svg>
+          </IconButton>
+          <IconButton label="API 设置" onClick={() => setSettingsOpen(true)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15 1.65 1.65 0 0 0 3.17 14H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" strokeLinejoin="round" strokeLinecap="round" />
+            </svg>
+          </IconButton>
+        </div>
 
         {/* ════════════════════════════════════════════ Stage 1: Input */}
         {stage === "input" && (
-          <div className="flex flex-col flex-1 px-5 pt-16 pb-8 gap-6">
+          <div key={stageKey} className="stage-enter flex flex-col flex-1 px-5 pt-20 pb-8 gap-7">
             <div>
-              <h1 className="font-serif text-[48px] font-bold leading-tight tracking-tight text-primary">
+              <h1 className="font-serif text-[52px] font-bold leading-[0.95] tracking-tight text-primary-deep">
                 La Historia
               </h1>
-              <p className="mt-2 text-sm text-muted leading-relaxed">
+              <svg
+                className="mt-2 w-[178px]"
+                width="178" height="10" viewBox="0 0 178 10" fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2 6c14-6 28 6 42 0s28-6 42 0 28 6 42 0 28-6 42 0 28-6 42 0"
+                  stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round"
+                  className="flourish-path"
+                />
+              </svg>
+              <p className="mt-3 text-[15px] text-muted leading-relaxed">
                 把你不会的词，变成更容易记住的故事
               </p>
             </div>
 
             <textarea
-              className="flex-1 min-h-52 w-full resize-none rounded-[12px] border border-rim bg-surface px-4 py-3.5 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
-              placeholder="把你正在读的西语文本粘贴进来..."
+              className="flex-1 min-h-52 w-full resize-none rounded-[14px] border border-rim bg-surface px-4 py-3.5 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors shadow-[0_2px_10px_rgba(15,46,34,0.05)]"
+              placeholder="把你正在读的西语文本粘贴进来，或点击右上角 ⚡ 直接从网页划词导入..."
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
             />
@@ -346,8 +487,8 @@ export default function Home() {
 
         {/* ════════════════════════════════════════════ Stage 2: Select */}
         {stage === "select" && (
-          <>
-            <div className="flex flex-col flex-1 px-5 pt-12 pb-32">
+          <div key={stageKey} className="stage-enter contents">
+            <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
               <p className={`${sectionLabel} mb-6`}>点击你不认识的词</p>
               <div className="text-[15px] leading-9 text-ink">
                 {tokens.map((token, i) => {
@@ -359,7 +500,7 @@ export default function Home() {
                         onClick={() => toggleWord(token.text)}
                         className={`cursor-pointer rounded px-0.5 transition-colors ${
                           selected
-                            ? "bg-primary-light text-primary font-semibold"
+                            ? "bg-primary-light text-primary-deep font-semibold"
                             : "hover:bg-primary-light/50"
                         }`}
                       >
@@ -373,6 +514,9 @@ export default function Home() {
             </div>
 
             <BottomBar>
+              {storyError && (
+                <p className="mb-2.5 text-xs text-[#B0503A] text-center">{storyError}</p>
+              )}
               <button
                 onClick={handleGenerateStory}
                 disabled={selectedWords.size === 0 || storyLoading}
@@ -380,7 +524,7 @@ export default function Home() {
               >
                 {storyLoading ? (
                   <>
-                    <Spinner />
+                    <Spinner light />
                     <span>正在生成故事...</span>
                   </>
                 ) : (
@@ -388,15 +532,15 @@ export default function Home() {
                 )}
               </button>
             </BottomBar>
-          </>
+          </div>
         )}
 
         {/* ════════════════════════════════════════════ Stage 3: Story */}
         {stage === "story" && (
-          <>
-            <div className="flex flex-col flex-1 px-5 pt-12 pb-32">
+          <div key={stageKey} className="stage-enter contents">
+            <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
               <p className={`${sectionLabel} mb-6`}>在新的语境里再认识这些词</p>
-              <p className="text-[15px] leading-9 text-ink">{renderStory()}</p>
+              <p className="font-serif text-[17px] leading-10 text-ink">{renderStory()}</p>
             </div>
 
             <BottomBar>
@@ -407,7 +551,7 @@ export default function Home() {
               >
                 {quizLoading ? (
                   <>
-                    <Spinner />
+                    <Spinner light />
                     <span>正在生成练习...</span>
                   </>
                 ) : (
@@ -422,24 +566,21 @@ export default function Home() {
                 className="fixed inset-0 z-50 flex items-end justify-center"
                 onClick={closeVocabCard}
               >
-                {/* Scrim */}
-                <div className="absolute inset-0 bg-black/25" />
+                <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
 
-                {/* Sheet */}
                 <div
-                  className="relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-12 shadow-[0_-8px_32px_rgba(0,0,0,0.12)]"
+                  className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-12 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Drag handle */}
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
 
                   <div className="flex items-start justify-between mb-5">
                     <div className="flex items-baseline gap-2">
-                      <span className="font-serif text-2xl font-bold text-ink">
+                      <span className="font-serif text-2xl font-bold text-primary-deep">
                         {vocabWord}
                       </span>
                       {vocabCard && (
-                        <span className="text-sm text-muted">
+                        <span className="text-sm text-muted px-2 py-0.5 rounded-full bg-primary-light">
                           {vocabCard.part_of_speech}
                         </span>
                       )}
@@ -485,20 +626,32 @@ export default function Home() {
                 </div>
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* ════════════════════════════════════════════ Stage 4: Quiz */}
         {stage === "quiz" && (
-          <div className="flex flex-col flex-1 px-5 pt-12 pb-8">
+          <div key={stageKey} className="stage-enter flex flex-col flex-1 px-5 pt-20 pb-8">
             <p className={`${sectionLabel} mb-8`}>巩固一下</p>
 
             {score !== null ? (
-              <div className="flex flex-col items-center gap-4 mt-16">
+              <div className="pop-enter flex flex-col items-center gap-4 mt-16">
                 <p className={sectionLabel}>得分</p>
-                <div className="font-serif text-6xl font-bold tracking-tight text-primary">
-                  {score}
-                  <span className="text-3xl text-muted">/{quiz.length}</span>
+                <div className="relative w-32 h-32 flex items-center justify-center">
+                  <svg className="absolute inset-0" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="46" fill="none" stroke="var(--border)" strokeWidth="2" />
+                    <circle
+                      cx="50" cy="50" r="46" fill="none" stroke="var(--accent)" strokeWidth="2.5"
+                      strokeDasharray={2 * Math.PI * 46}
+                      strokeDashoffset={2 * Math.PI * 46 * (1 - score / Math.max(quiz.length, 1))}
+                      strokeLinecap="round"
+                      transform="rotate(-90 50 50)"
+                    />
+                  </svg>
+                  <div className="font-serif text-5xl font-bold tracking-tight text-primary-deep">
+                    {score}
+                    <span className="text-2xl text-muted">/{quiz.length}</span>
+                  </div>
                 </div>
                 <p className="text-sm text-muted mt-1">
                   {score === quiz.length
@@ -516,6 +669,181 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {/* ════════════════════════════════════════════ Settings Sheet */}
+        {settingsOpen && (
+          <SettingsSheet
+            current={apiConfig}
+            onClose={() => setSettingsOpen(false)}
+            onSave={saveSettings}
+          />
+        )}
+
+        {/* ════════════════════════════════════════════ Bookmarklet Sheet */}
+        {bookmarkletOpen && origin && (
+          <BookmarkletSheet origin={origin} onClose={() => setBookmarkletOpen(false)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings Sheet ──────────────────────────────────────────────────────────
+
+function SettingsSheet({
+  current,
+  onClose,
+  onSave,
+}: {
+  current: ApiConfig | null;
+  onClose: () => void;
+  onSave: (cfg: ApiConfig | null) => void;
+}) {
+  const [custom, setCustom] = useState(!!current);
+  const [baseURL, setBaseURL] = useState(current?.baseURL ?? PRESETS[0].baseURL);
+  const [model, setModel] = useState(current?.model ?? PRESETS[0].model);
+  const [apiKey, setApiKey] = useState(current?.apiKey ?? "");
+  const [label, setLabel] = useState(current?.label ?? PRESETS[0].label);
+
+  function applyPreset(p: (typeof PRESETS)[number]) {
+    setLabel(p.label);
+    setBaseURL(p.baseURL);
+    setModel(p.model);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
+      <div
+        className="sheet-enter relative w-full max-w-[430px] max-h-[86vh] overflow-y-auto bg-surface rounded-t-2xl px-5 pt-6 pb-10 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
+
+        <div className="flex items-start justify-between mb-1">
+          <h2 className="font-serif text-xl font-bold text-primary-deep">API 设置</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors">✕</button>
+        </div>
+        <p className="text-xs text-muted leading-relaxed mb-5">
+          默认使用平台提供的免费额度。如果想获得更高质量的生成，或者不想排队，可以填入自己的 API Key —— 它只会被转发用于当次请求，不会保存在服务器上，仅存在你的浏览器本地。
+        </p>
+
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setCustom(false)}
+            className={`flex-1 rounded-[10px] border px-3 py-2.5 text-sm font-medium transition-colors ${
+              !custom ? "border-primary bg-primary-light text-primary-deep" : "border-rim text-muted"
+            }`}
+          >
+            使用默认（DeepSeek）
+          </button>
+          <button
+            onClick={() => setCustom(true)}
+            className={`flex-1 rounded-[10px] border px-3 py-2.5 text-sm font-medium transition-colors ${
+              custom ? "border-primary bg-primary-light text-primary-deep" : "border-rim text-muted"
+            }`}
+          >
+            自定义 API
+          </button>
+        </div>
+
+        {custom && (
+          <div className="flex flex-col gap-4">
+            <div>
+              <p className={`${sectionLabel} mb-2`}>选择平台</p>
+              <div className="flex flex-wrap gap-2">
+                {PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    onClick={() => applyPreset(p)}
+                    className={`${btnGhost} ${label === p.label ? "border-primary bg-primary-light text-primary-deep" : ""}`}
+                  >
+                    {p.label}
+                    <span className="ml-1 text-[11px] text-muted">{p.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className={sectionLabel}>Base URL</span>
+              <input className={fieldClass} value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className={sectionLabel}>模型名称</span>
+              <input className={fieldClass} value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如 deepseek-chat" />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className={sectionLabel}>API Key</span>
+              <input className={fieldClass} type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
+            </label>
+          </div>
+        )}
+
+        <button
+          onClick={() =>
+            onSave(custom ? { baseURL, model, apiKey, label } : null)
+          }
+          disabled={custom && (!baseURL || !model || !apiKey)}
+          className={`${btnPrimary} mt-6`}
+        >
+          保存设置
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Bookmarklet Sheet ───────────────────────────────────────────────────────
+
+function BookmarkletSheet({ origin, onClose }: { origin: string; onClose: () => void }) {
+  const href = buildBookmarklet(origin);
+  const [copied, setCopied] = useState(false);
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // clipboard unavailable — user can still drag the link manually
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
+      <div
+        className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-10 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
+
+        <div className="flex items-start justify-between mb-1">
+          <h2 className="font-serif text-xl font-bold text-primary-deep">划词导入</h2>
+          <button onClick={onClose} className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors">✕</button>
+        </div>
+        <p className="text-xs text-muted leading-relaxed mb-5">
+          把下面的按钮拖到浏览器书签栏。以后在任意网页上选中一段西语文本，点一下书签，就会直接跳回这里开始选词——不用再手动复制粘贴。
+        </p>
+
+        <div className="flex flex-col items-center gap-3 rounded-[12px] border border-dashed border-rim bg-primary-light/30 px-4 py-6">
+          <a
+            href={href}
+            onClick={(e) => e.preventDefault()}
+            draggable
+            className="select-none cursor-grab active:cursor-grabbing rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-[0_4px_14px_rgba(15,46,34,0.18)]"
+          >
+            ⚡ 用 La Historia 学这段
+          </a>
+          <p className="text-[11px] text-muted">↑ 把它拖到书签栏</p>
+        </div>
+
+        <button onClick={copyLink} className={`${btnGhost} w-full mt-4`}>
+          {copied ? "已复制 ✓" : "手机 / 触屏设备：复制链接手动添加"}
+        </button>
       </div>
     </div>
   );

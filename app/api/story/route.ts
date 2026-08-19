@@ -1,10 +1,5 @@
-import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-
-const client = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: "https://api.deepseek.com/v1",
-});
+import { resolveClient } from "../_lib/ai-client";
 
 const STORY_PROMPT = `You are a Spanish writing assistant for Chinese learners of Spanish.
 
@@ -18,7 +13,7 @@ Return ONLY the Spanish passage text, with no title, no labels, no explanation, 
 
 export async function POST(request: NextRequest) {
   try {
-    const { words, level, genre } = await request.json();
+    const { words, level, genre, apiConfig } = await request.json();
 
     if (!words || !Array.isArray(words) || words.length === 0) {
       return NextResponse.json(
@@ -39,11 +34,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { client, model } = resolveClient(apiConfig);
+
     const userMessage =
       `Level: ${level}\nGenre: ${genre}\nWords to include: ${words.join(", ")}`;
 
     const response = await client.chat.completions.create({
-      model: "deepseek-chat",
+      model,
       max_tokens: 512,
       messages: [
         { role: "system", content: STORY_PROMPT },
@@ -56,9 +53,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ story: storyText.trim() });
   } catch (error) {
     console.error("故事生成失败:", error);
-    return NextResponse.json(
-      { error: "故事生成失败，请重试" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error && /apiConfig/i.test(error.message)
+        ? error.message
+        : "故事生成失败，请检查 API 设置或重试";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
