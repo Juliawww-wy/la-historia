@@ -1,36 +1,40 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# La Historia
+
+帮助中文母语者学西班牙语：粘贴一段西语文本 → 选出不认识的词 → AI 用这些词生成一篇新故事 → 点词看词卡 → 生成小测验巩固。
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Create a `.env.local` in the project root (never commit real secrets):
+
+```bash
+# ── LLM 默认后端（故事 / 词卡 / 测验；用户也可在设置里 BYOK）──────────────
+DEEPSEEK_API_KEY=sk-...
+
+# ── 机器翻译（Stage 1 粘贴/导入文本的中文大意，不走 LLM）──────────────────
+# 在百度翻译开放平台申请通用文本翻译 API：https://fanyi-api.baidu.com/
+# 标准版每月约 5 万字符免费。把 APP ID 和密钥填到下面两个变量。
+BAIDU_TRANSLATE_APPID=your_app_id
+BAIDU_TRANSLATE_KEY=your_secret_key
+```
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | `/api/story`, `/api/quiz`, `/api/vocab-card` | Platform fallback when the user has not set a custom API in Settings |
+| `BAIDU_TRANSLATE_APPID` | `/api/translate` | Baidu Fanyi app id |
+| `BAIDU_TRANSLATE_KEY` | `/api/translate` | Baidu Fanyi secret key |
+
+Stage-1 translation is intentionally a traditional machine-translation call (Baidu by default), not `resolveClient` / BYOK LLM, so paste/import traffic does not burn token quota. The provider is abstracted under `app/api/_lib/translate/` if you later switch to Volcengine or Niutrans.
 
 ## Learn More
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [Next.js Documentation](https://nextjs.org/docs)
+- [Baidu Translate API docs](https://fanyi-api.baidu.com/doc/21)

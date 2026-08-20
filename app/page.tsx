@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ function Spinner({ light = false }: { light?: boolean }) {
 }
 
 const btnPrimary =
-  "w-full rounded-[10px] bg-primary hover:bg-primary-deep py-4 text-sm font-semibold text-white transition-colors disabled:opacity-25 active:opacity-80 shadow-[0_4px_14px_rgba(15,46,34,0.18)]";
+  "w-full rounded-[8px] bg-accent hover:bg-accent-deep py-4 text-sm font-semibold text-white transition-[background-color,box-shadow,transform] duration-150 disabled:opacity-25 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 shadow-[5px_6px_0_0_#000] hover:shadow-[3px_4px_0_0_#000] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-[1px_2px_0_0_#000] active:translate-x-[4px] active:translate-y-[4px]";
 
 const btnGhost =
   "rounded-[10px] border border-rim bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:border-primary/40 hover:bg-primary-light/40 transition-colors";
@@ -109,6 +109,53 @@ const sectionLabel =
 
 const fieldClass =
   "w-full rounded-[8px] border border-rim bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/70 focus:outline-none focus:border-primary/50 transition-colors";
+
+function TranslationPanel({
+  loading,
+  translation,
+  error,
+  open,
+  onToggle,
+}: {
+  loading: boolean;
+  translation: string | null;
+  error: string | null;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!loading && !translation && !error) return null;
+  return (
+    <div className="pop-enter rounded-[12px] border border-rim bg-primary-light/40 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left"
+        aria-expanded={open}
+      >
+        <span className={`${sectionLabel} normal-case tracking-wide`}>中文大意</span>
+        <span className="flex items-center gap-2 text-muted">
+          {loading && <Spinner />}
+          <span className="text-xs">{open ? "收起" : "展开"}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="px-4 pb-3.5 border-t border-rim/60">
+          {loading && !translation && (
+            <p className="pt-3 text-xs text-muted">正在翻译…</p>
+          )}
+          {error && !loading && (
+            <p className="pt-3 text-xs text-muted">{error}</p>
+          )}
+          {translation && (
+            <p className="pt-3 text-sm text-ink leading-relaxed whitespace-pre-wrap">
+              {translation}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Header icon buttons (settings / bookmarklet) ───────────────────────────
 
@@ -125,7 +172,7 @@ function IconButton({
     <button
       onClick={onClick}
       aria-label={label}
-      className="w-9 h-9 flex items-center justify-center rounded-full text-primary/70 hover:text-primary hover:bg-primary-light/60 transition-colors"
+      className="w-9 h-9 flex items-center justify-center rounded-full text-primary/70 hover:text-accent hover:bg-accent-light/30 transition-colors"
     >
       {children}
     </button>
@@ -136,8 +183,195 @@ function IconButton({
 
 function BottomBar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-gradient-to-t from-bg via-bg/95 to-transparent pt-8 px-5 pb-6">
+    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-gradient-to-t from-bg via-bg/95 to-transparent pt-8 px-5 pb-6 lg:absolute lg:left-0 lg:right-0 lg:translate-x-0 lg:max-w-none">
       {children}
+    </div>
+  );
+}
+
+/** One sketched Spanish-culture word + a loose, unclosed line icon. */
+function DoodleWord({
+  word,
+  icon,
+  posClass,
+  rotate,
+  delay = false,
+}: {
+  word: string;
+  icon: React.ReactNode;
+  posClass: string;
+  rotate: number;
+  delay?: boolean;
+}) {
+  return (
+    <div
+      className={`absolute flex items-center gap-2 ${
+        delay ? "marginalia-enter-delay" : "marginalia-enter"
+      } ${posClass}`}
+      style={{ transform: `rotate(${rotate}deg)` }}
+    >
+      {icon}
+      <span className="doodle-word text-[26px]">{word}</span>
+    </div>
+  );
+}
+
+const doodleIconProps = {
+  width: 28,
+  height: 28,
+  viewBox: "0 0 28 28",
+  fill: "none" as const,
+  strokeWidth: 1.6,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  className: "doodle-icon shrink-0",
+};
+
+/** Desktop-only ambient décor around the journal card — pure presentation. */
+function DesktopMarginalia() {
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 hidden lg:block overflow-hidden"
+      aria-hidden="true"
+    >
+      {/* Oversized brand watermark */}
+      <p className="absolute top-[8%] left-1/2 -translate-x-1/2 font-serif text-[clamp(5rem,14vw,11rem)] font-bold leading-none tracking-tight text-primary-deep/[0.045] select-none whitespace-nowrap">
+        La Historia
+      </p>
+
+      {/* Left margin: product blurb + flourish */}
+      <aside className="marginalia-enter absolute top-[22%] left-[max(1.5rem,calc(50%-430px/2-20rem))] w-[15.5rem] xl:left-[max(2rem,calc(50%-430px/2-22rem))]">
+        <svg
+          className="mb-4 w-28"
+          width="112"
+          height="28"
+          viewBox="0 0 112 28"
+          fill="none"
+        >
+          <path
+            d="M4 18c8-10 16 8 24-2s14-8 22 2 16 10 24 0 14-10 22 0 12 8 18 2"
+            stroke="var(--accent)"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            className="flourish-path-long"
+            opacity="0.75"
+          />
+          {/* Quill tip */}
+          <path
+            d="M96 6c4 2 8 6 10 12-4-1-8-3-12-7 1-2 2-3.5 2-5Z"
+            fill="var(--primary)"
+            opacity="0.35"
+          />
+        </svg>
+        <p className="font-serif text-lg font-bold text-primary-deep/70 leading-snug">
+          把生词写进故事里
+        </p>
+        <p className="mt-2 text-[13px] text-muted/80 leading-relaxed">
+          选中不会的西语词，让它们自然出现在一篇新故事中——读、点、练，一气呵成。
+        </p>
+      </aside>
+
+      {/* Right margin: living demo of vocab → story */}
+      <aside className="marginalia-enter-delay absolute top-[28%] right-[max(1.5rem,calc(50%-430px/2-20rem))] w-[15.5rem] xl:right-[max(2rem,calc(50%-430px/2-22rem))]">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted/70 mb-3">
+          生词 → 故事
+        </p>
+        <p className="text-[13px] text-ink/70 leading-7 mb-4">
+          <span className="ink-squiggle">conocer</span>
+          {" · "}
+          <span className="ink-squiggle">mañana</span>
+          {" · "}
+          <span className="ink-squiggle">calle</span>
+        </p>
+        <svg
+          className="mb-3 w-24"
+          width="96"
+          height="8"
+          viewBox="0 0 96 8"
+          fill="none"
+        >
+          <path
+            d="M2 5c10-5 20 5 30 0s20-5 30 0 20 5 30 0"
+            stroke="var(--accent)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            className="flourish-path"
+            opacity="0.7"
+          />
+        </svg>
+        <p className="font-serif text-[14px] text-primary-deep/65 leading-7 italic">
+          Una{" "}
+          <span className="ink-squiggle not-italic">mañana</span>
+          , decidió{" "}
+          <span className="ink-squiggle not-italic">conocer</span>
+          {" "}la{" "}
+          <span className="ink-squiggle not-italic">calle</span>
+          {" "}donde creció…
+        </p>
+      </aside>
+
+      {/* Sketched Spanish-culture words, scattered loosely in the margins */}
+      <DoodleWord
+        word="sangría"
+        rotate={-6}
+        posClass="top-[5%] left-[max(1.5rem,calc(50%-430px/2-23rem))]"
+        icon={
+          <svg {...doodleIconProps}>
+            <path d="M7 4c0 5 1 9 7 9s7-4 7-9" />
+            <path d="M14 13v10" />
+            <path d="M9 25l10-1" />
+          </svg>
+        }
+      />
+      <DoodleWord
+        word="flamenco"
+        rotate={5}
+        delay
+        posClass="top-[9%] right-[max(1.5rem,calc(50%-430px/2-24rem))]"
+        icon={
+          <svg {...doodleIconProps}>
+            <path d="M4 22c0-9 7-13 12-11 6 2 7 8 3 10-3 2-7 0-6-3 1-2 4-2 5 0" />
+          </svg>
+        }
+      />
+      <DoodleWord
+        word="siesta"
+        rotate={-4}
+        posClass="top-[63%] left-[max(1.5rem,calc(50%-430px/2-21.5rem))]"
+        icon={
+          <svg {...doodleIconProps}>
+            <path d="M18 5c-7 0-12 5-12 11s5 11 12 11c-9 1-16-4-16-11S9 4 18 5Z" />
+          </svg>
+        }
+      />
+      <DoodleWord
+        word="tertulia"
+        rotate={6}
+        delay
+        posClass="top-[58%] right-[max(1.5rem,calc(50%-430px/2-21.5rem))]"
+        icon={
+          <svg {...doodleIconProps}>
+            <path d="M4 7c0-1.5 1-2.5 2.5-2.5h15C22.5 4.5 24 6 24 8v8c0 1.5-1.5 2.5-3 2.5h-9L7 23l1-4.5H6.5C5 18.5 4 17.5 4 16Z" />
+          </svg>
+        }
+      />
+
+      {/* Bottom corner flourish */}
+      <svg
+        className="absolute bottom-10 left-[max(2rem,calc(50%-430px/2-18rem))] w-40 opacity-50"
+        width="160"
+        height="36"
+        viewBox="0 0 160 36"
+        fill="none"
+      >
+        <path
+          d="M4 28c18-16 36 12 54-4s34-14 50 4 30 14 48-2"
+          stroke="var(--primary)"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          className="flourish-path-long"
+        />
+      </svg>
     </div>
   );
 }
@@ -150,6 +384,13 @@ export default function Home() {
 
   // Stage 1
   const [inputText, setInputText] = useState("");
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [translationLoading, setTranslationLoading] = useState(false);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const [translationOpen, setTranslationOpen] = useState(true);
+  const translateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const translateAbortRef = useRef<AbortController | null>(null);
+  const lastTranslatedRef = useRef("");
 
   // Stage 2
   const [tokens, setTokens] = useState<Token[]>([]);
@@ -176,6 +417,103 @@ export default function Home() {
   const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
   const [origin, setOrigin] = useState("");
 
+  function clearTranslation() {
+    if (translateTimerRef.current) {
+      clearTimeout(translateTimerRef.current);
+      translateTimerRef.current = null;
+    }
+    translateAbortRef.current?.abort();
+    translateAbortRef.current = null;
+    lastTranslatedRef.current = "";
+    setTranslation(null);
+    setTranslationLoading(false);
+    setTranslationError(null);
+  }
+
+  async function requestTranslate(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      clearTranslation();
+      return;
+    }
+    if (trimmed === lastTranslatedRef.current) return;
+
+    if (translateTimerRef.current) {
+      clearTimeout(translateTimerRef.current);
+      translateTimerRef.current = null;
+    }
+    translateAbortRef.current?.abort();
+    const ac = new AbortController();
+    translateAbortRef.current = ac;
+
+    setTranslation(null);
+    setTranslationError(null);
+    setTranslationLoading(true);
+    setTranslationOpen(true);
+
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed }),
+        signal: ac.signal,
+      });
+      const data = (await res.json()) as {
+        translation?: string;
+        error?: string;
+        code?: string;
+      };
+      if (!res.ok) {
+        if (data.code === "not_configured") {
+          setTranslationError("翻译服务未配置");
+        } else if (data.code === "rate_limited") {
+          setTranslationError("翻译过于频繁，请稍后再试");
+        } else {
+          setTranslationError("翻译请求失败");
+        }
+        return;
+      }
+      lastTranslatedRef.current = trimmed;
+      setTranslation(data.translation?.trim() || null);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setTranslationError("翻译请求失败");
+    } finally {
+      if (translateAbortRef.current === ac) {
+        setTranslationLoading(false);
+      }
+    }
+  }
+
+  function scheduleTranslate(text: string) {
+    if (translateTimerRef.current) clearTimeout(translateTimerRef.current);
+    translateTimerRef.current = setTimeout(() => {
+      translateTimerRef.current = null;
+      void requestTranslate(text);
+    }, 1500);
+  }
+
+  function handleInputChange(value: string) {
+    setInputText(value);
+    if (!value.trim()) {
+      clearTranslation();
+      return;
+    }
+    scheduleTranslate(value);
+  }
+
+  function handleInputPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = e.clipboardData.getData("text");
+    if (!pasted) return;
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? inputText.length;
+    const end = el.selectionEnd ?? start;
+    const next = inputText.slice(0, start) + pasted + inputText.slice(end);
+    e.preventDefault();
+    setInputText(next);
+    void requestTranslate(next);
+  }
+
   // ── Boot: load saved API config, load ?text= from bookmarklet ─────────────
 
   useEffect(() => {
@@ -195,7 +533,16 @@ export default function Home() {
       setStage("select");
       setStageKey((k) => k + 1);
       window.history.replaceState({}, "", window.location.pathname);
+      void requestTranslate(incoming);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only boot
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (translateTimerRef.current) clearTimeout(translateTimerRef.current);
+      translateAbortRef.current?.abort();
+    };
   }, []);
 
   function goToStage(next: Stage) {
@@ -317,6 +664,7 @@ export default function Home() {
   function handleReset() {
     goToStage("input");
     setInputText("");
+    clearTranslation();
     setTokens([]);
     setSelectedWords(new Set());
     setStory("");
@@ -427,18 +775,20 @@ export default function Home() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="paper-grain min-h-screen bg-bg flex justify-center">
-      <div className="w-full max-w-[430px] flex flex-col min-h-screen relative">
+    <div className="paper-grain min-h-screen bg-bg flex justify-center relative overflow-x-hidden">
+      <DesktopMarginalia />
+
+      <div className="journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm">
 
         {/* Header: settings + bookmarklet, present on every stage */}
         <div className="absolute top-4 right-4 z-20 flex gap-1">
           <IconButton label="划词导入工具" onClick={() => setBookmarkletOpen(true)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" strokeLinejoin="round" strokeLinecap="round" />
             </svg>
           </IconButton>
           <IconButton label="API 设置" onClick={() => setSettingsOpen(true)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15 1.65 1.65 0 0 0 3.17 14H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" strokeLinejoin="round" strokeLinecap="round" />
             </svg>
@@ -472,8 +822,21 @@ export default function Home() {
               className="flex-1 min-h-52 w-full resize-none rounded-[14px] border border-rim bg-surface px-4 py-3.5 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors shadow-[0_2px_10px_rgba(15,46,34,0.05)]"
               placeholder="把你正在读的西语文本粘贴进来，或点击右上角 ⚡ 直接从网页划词导入..."
               value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+              onChange={(e) => handleInputChange(e.target.value)}
+              onPaste={handleInputPaste}
             />
+
+            {(translationLoading || translation || translationError) && (
+              <div className="-mt-3">
+                <TranslationPanel
+                  loading={translationLoading}
+                  translation={translation}
+                  error={translationError}
+                  open={translationOpen}
+                  onToggle={() => setTranslationOpen((o) => !o)}
+                />
+              </div>
+            )}
 
             <button
               onClick={handleStartSelect}
@@ -489,7 +852,18 @@ export default function Home() {
         {stage === "select" && (
           <div key={stageKey} className="stage-enter contents">
             <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
-              <p className={`${sectionLabel} mb-6`}>点击你不认识的词</p>
+              <p className={`${sectionLabel} mb-4`}>点击你不认识的词</p>
+              {(translationLoading || translation || translationError) && (
+                <div className="mb-5">
+                  <TranslationPanel
+                    loading={translationLoading}
+                    translation={translation}
+                    error={translationError}
+                    open={translationOpen}
+                    onToggle={() => setTranslationOpen((o) => !o)}
+                  />
+                </div>
+              )}
               <div className="text-[15px] leading-9 text-ink">
                 {tokens.map((token, i) => {
                   if (token.kind === "word") {
@@ -798,17 +1172,62 @@ function SettingsSheet({
 
 // ─── Bookmarklet Sheet ───────────────────────────────────────────────────────
 
+type BookmarkBrowser = "chrome" | "safari" | "edge";
+
+function detectBookmarkBrowser(): BookmarkBrowser {
+  if (typeof navigator === "undefined") return "chrome";
+  const ua = navigator.userAgent;
+  if (/Edg\/|EdgiOS\//.test(ua)) return "edge";
+  if (/Chrome\/|CriOS\//.test(ua)) return "chrome";
+  if (/Safari\//.test(ua) && !/Chrome\//.test(ua) && !/Chromium\//.test(ua)) return "safari";
+  return "chrome";
+}
+
+const BOOKMARK_GUIDES: Record<
+  BookmarkBrowser,
+  { label: string; steps: string[]; note?: string }
+> = {
+  chrome: {
+    label: "Chrome",
+    steps: [
+      "打开书签栏（没有的话按 ⌘⇧B / Ctrl+Shift+B 显示）",
+      "在书签栏空白处右键 → 选择「添加网页」或「添加书签」",
+      "名称随意填（例如「La Historia」），网址栏粘贴刚才复制的链接，保存即可",
+    ],
+  },
+  edge: {
+    label: "Edge",
+    steps: [
+      "打开收藏夹栏（没有的话按 ⌘⇧B / Ctrl+Shift+B 显示）",
+      "在收藏夹栏空白处右键 → 选择「添加页面」或「新建收藏」",
+      "名称随意填（例如「La Historia」），网址栏粘贴刚才复制的链接，保存即可",
+    ],
+  },
+  safari: {
+    label: "Safari",
+    steps: [
+      "菜单栏「书签」→「添加书签」，保存位置选「收藏栏」",
+      "保存后再打开「书签」→「编辑书签」，找到刚加的那条",
+      "把网址替换成刚才复制的链接，保存即可",
+    ],
+    note: "Safari 有时会拦截 javascript: 前缀。如果粘贴后发现网址开头没有 javascript:，请手动在开头补上。",
+  },
+};
+
 function BookmarkletSheet({ origin, onClose }: { origin: string; onClose: () => void }) {
   const href = buildBookmarklet(origin);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [browser, setBrowser] = useState<BookmarkBrowser>(detectBookmarkBrowser);
+  const guide = BOOKMARK_GUIDES[browser];
 
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(href);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
+      setCopyFailed(false);
     } catch {
-      // clipboard unavailable — user can still drag the link manually
+      setCopyFailed(true);
     }
   }
 
@@ -816,7 +1235,7 @@ function BookmarkletSheet({ origin, onClose }: { origin: string; onClose: () => 
     <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
       <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
       <div
-        className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-10 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
+        className="sheet-enter relative w-full max-w-[430px] max-h-[86vh] overflow-y-auto bg-surface rounded-t-2xl px-5 pt-6 pb-10 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
@@ -826,24 +1245,81 @@ function BookmarkletSheet({ origin, onClose }: { origin: string; onClose: () => 
           <button onClick={onClose} className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors">✕</button>
         </div>
         <p className="text-xs text-muted leading-relaxed mb-5">
-          把下面的按钮拖到浏览器书签栏。以后在任意网页上选中一段西语文本，点一下书签，就会直接跳回这里开始选词——不用再手动复制粘贴。
+          先复制书签链接，再按你的浏览器手动新建一条书签。以后在任意网页上选中一段西语文本，点一下书签，就会直接跳回这里开始选词。
         </p>
 
-        <div className="flex flex-col items-center gap-3 rounded-[12px] border border-dashed border-rim bg-primary-light/30 px-4 py-6">
-          <a
-            href={href}
-            onClick={(e) => e.preventDefault()}
-            draggable
-            className="select-none cursor-grab active:cursor-grabbing rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-[0_4px_14px_rgba(15,46,34,0.18)]"
-          >
-            ⚡ 用 La Historia 学这段
-          </a>
-          <p className="text-[11px] text-muted">↑ 把它拖到书签栏</p>
+        <p className={`${sectionLabel} mb-2`}>1. 复制书签链接</p>
+        <button onClick={copyLink} className={btnPrimary}>
+          {copied ? "已复制 ✓" : "复制链接"}
+        </button>
+        {copied && (
+          <p className="pop-enter mt-2 text-center text-xs font-medium text-primary">
+            已复制，现在去按下面步骤新建书签
+          </p>
+        )}
+        {copyFailed && (
+          <label className="mt-3 flex flex-col gap-1.5">
+            <span className="text-[11px] text-muted">复制失败，请手动全选下面的链接</span>
+            <input
+              className={fieldClass}
+              readOnly
+              value={href}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </label>
+        )}
+
+        <p className={`${sectionLabel} mt-6 mb-2`}>2. 按你的浏览器新建书签</p>
+        <div className="flex gap-2 mb-4" role="tablist" aria-label="选择浏览器">
+          {(Object.keys(BOOKMARK_GUIDES) as BookmarkBrowser[]).map((id) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={browser === id}
+              onClick={() => setBrowser(id)}
+              className={`flex-1 rounded-[10px] border px-3 py-2 text-sm font-medium transition-colors ${
+                browser === id
+                  ? "border-primary bg-primary-light text-primary-deep"
+                  : "border-rim text-muted"
+              }`}
+            >
+              {BOOKMARK_GUIDES[id].label}
+            </button>
+          ))}
         </div>
 
-        <button onClick={copyLink} className={`${btnGhost} w-full mt-4`}>
-          {copied ? "已复制 ✓" : "手机 / 触屏设备：复制链接手动添加"}
-        </button>
+        <ol className="flex flex-col gap-2.5">
+          {guide.steps.map((step, i) => (
+            <li key={step} className="flex gap-2.5 text-sm text-ink leading-relaxed">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-light text-[11px] font-semibold text-primary">
+                {i + 1}
+              </span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+        {guide.note && (
+          <p className="mt-3 rounded-[8px] border border-accent/30 bg-accent-light/20 px-3 py-2 text-[11px] leading-relaxed text-ink">
+            {guide.note}
+          </p>
+        )}
+
+        <details className="mt-6 rounded-[12px] border border-dashed border-rim bg-primary-light/30 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted select-none">
+            也可以拖到书签栏（需先显示书签栏）
+          </summary>
+          <div className="flex flex-col items-center gap-3 pt-4 pb-2">
+            <a
+              href={href}
+              onClick={(e) => e.preventDefault()}
+              draggable
+              className="select-none cursor-grab active:cursor-grabbing rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-[0_4px_14px_rgba(15,46,34,0.18)]"
+            >
+              ⚡ 用 La Historia 学这段
+            </a>
+            <p className="text-[11px] text-muted">↑ 把它拖到书签栏</p>
+          </div>
+        </details>
       </div>
     </div>
   );
