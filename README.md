@@ -3,6 +3,10 @@ AI-powered Spanish vocabulary learning tool for Chinese learners — turns unfam
 
 帮助中文母语者学西班牙语：粘贴一段西语文本 → 选出不认识的词 → AI 用这些词生成一篇新故事 → 点词看词卡 → 生成小测验巩固。
 
+## Live Demo
+
+🔗 [https://la-historia-xxx.vercel.app](https://la-historia-xxx.vercel.app)
+
 ## Getting Started
 
 ```bash
