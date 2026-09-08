@@ -99,6 +99,16 @@ textarea:focus-visible,
   }
 }
 
+/* Hide scrollbar on horizontally-scrolling rows (level chips, article cards)
+   while keeping native touch/wheel scroll behavior. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── Marginalia doodles: sketched Spanish-culture words + icons ─────────────── */
 /* Ambient, background-only decoration — kept quiet (reduced opacity, thin
    strokes, irregular rotation) so it never competes with the core flow. */

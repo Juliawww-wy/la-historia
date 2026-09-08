@@ -10,6 +10,7 @@ Example output format:
 {
   "word": "原词",
   "part_of_speech": "词性（名词/动词/形容词等，用中文）",
+  "cefr_level": "这个词本身的常见难度，CEFR 六级之一：A1/A2/B1/B2/C1/C2",
   "context_meaning": {
     "zh": "这个词在原句中的具体含义（中文，1句话，贴合语境）",
     "explanation": "为什么在这个句子里是这个意思，如有歧义请说明（中文，1-2句）"
@@ -19,9 +20,14 @@ Example output format:
     "en": "English translation(s)",
     "es": "Definición en español (simple, B1 level)"
   },
+  "related_expressions": [
+    { "es": "常见搭配或习语，用 ~ 代表这个目标词，例如 tener ~ mal genio", "zh": "中文释义" }
+  ],
   "original_sentence": "原句原文",
   "original_sentence_translation": "原句中文翻译"
-}`;
+}
+
+related_expressions: 给 2-3 个真实、地道、学习者会在教材/词典里查到的固定搭配或短语，不要编造生僻用法。`;
 
 function extractJson(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);

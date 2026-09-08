@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState, type ClipboardEvent } from "react";
+import Link from "next/link";
+import { btnPrimary, btnGhost, sectionLabel, fieldClass } from "@/app/ui/shared";
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface VocabCard {
   word: string;
   part_of_speech: string;
+  cefr_level?: string;
   context_meaning: { zh: string; explanation: string };
   general_meaning: { zh: string; en: string; es: string };
+  related_expressions?: { es: string; zh: string }[];
   original_sentence: string;
   original_sentence_translation: string;
 }
@@ -41,6 +45,23 @@ type Token =
   | { kind: "word"; text: string }
   | { kind: "space"; text: string }
   | { kind: "punct"; text: string };
+
+type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
+
+interface Article {
+  id: string;
+  source: string;
+  title: string;
+  summary: string;
+  level: CefrLevel;
+  link: string;
+  publishedAt: string | null;
+}
+
+// A1（零基础）和 C2（母语级）暂不作为筛选项——目前的素材库覆盖不了这两头，
+// 强行提供筛选会让用户点进去发现没内容。文章本身仍可能被分到这两级，
+// 在"全部"里能看到，只是没有专门的筛选按钮。
+const FILTERABLE_LEVELS: CefrLevel[] = ["A2", "B1", "B2", "C1"];
 
 const PRESETS: { label: string; baseURL: string; model: string; hint: string }[] = [
   { label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", model: "deepseek-chat", hint: "官方性价比之选" },
@@ -98,18 +119,6 @@ function Spinner({ light = false }: { light?: boolean }) {
   );
 }
 
-const btnPrimary =
-  "w-full rounded-[8px] bg-accent hover:bg-accent-deep py-4 text-sm font-semibold text-white transition-[background-color,box-shadow,transform] duration-150 disabled:opacity-25 disabled:shadow-none disabled:translate-x-0 disabled:translate-y-0 shadow-[5px_6px_0_0_#000] hover:shadow-[3px_4px_0_0_#000] hover:translate-x-[2px] hover:translate-y-[2px] active:shadow-[1px_2px_0_0_#000] active:translate-x-[4px] active:translate-y-[4px]";
-
-const btnGhost =
-  "rounded-[10px] border border-rim bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:border-primary/40 hover:bg-primary-light/40 transition-colors";
-
-const sectionLabel =
-  "text-[11px] font-semibold text-muted uppercase tracking-widest";
-
-const fieldClass =
-  "w-full rounded-[8px] border border-rim bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/70 focus:outline-none focus:border-primary/50 transition-colors";
-
 function TranslationPanel({
   loading,
   translation,
@@ -153,6 +162,82 @@ function TranslationPanel({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Article recommendations (Stage 1 secondary entry point) ───────────────
+
+function ArticleRecommendations({
+  articles,
+  levelFilter,
+  onFilterChange,
+  onPick,
+}: {
+  articles: Article[];
+  levelFilter: CefrLevel | "all";
+  onFilterChange: (level: CefrLevel | "all") => void;
+  onPick: (article: Article) => void;
+}) {
+  if (articles.length === 0) return null;
+
+  const filtered =
+    levelFilter === "all" ? articles : articles.filter((a) => a.level === levelFilter);
+
+  return (
+    <div className="pop-enter">
+      <div className="flex items-center justify-between mb-2.5">
+        <p className={sectionLabel}>外刊精选 · 分级阅读</p>
+      </div>
+
+      <div className="flex gap-1.5 mb-3 overflow-x-auto no-scrollbar">
+        <button
+          onClick={() => onFilterChange("all")}
+          className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            levelFilter === "all"
+              ? "border-primary bg-primary-light text-primary-deep"
+              : "border-rim text-muted"
+          }`}
+        >
+          全部
+        </button>
+        {FILTERABLE_LEVELS.map((lvl) => (
+          <button
+            key={lvl}
+            onClick={() => onFilterChange(lvl)}
+            className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              levelFilter === lvl
+                ? "border-primary bg-primary-light text-primary-deep"
+                : "border-rim text-muted"
+            }`}
+          >
+            {lvl}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-5 px-5 pb-1">
+        {filtered.map((article) => (
+          <button
+            key={article.id}
+            onClick={() => onPick(article)}
+            className="shrink-0 w-64 text-left rounded-[12px] border border-rim bg-surface p-4 hover:border-primary/40 transition-colors"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <span className="rounded-full bg-accent-light/40 text-accent-deep px-2 py-0.5 text-[11px] font-semibold">
+                {article.level}
+              </span>
+              <span className="text-[11px] text-muted truncate">{article.source}</span>
+            </div>
+            <p className="font-serif text-[15px] font-semibold text-ink leading-snug line-clamp-2 mb-1.5">
+              {article.title}
+            </p>
+            <p className="text-xs text-muted leading-relaxed line-clamp-2">
+              {article.summary}
+            </p>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -417,6 +502,16 @@ export default function Home() {
   const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
   const [origin, setOrigin] = useState("");
 
+  // Article recommendations (Stage 1 secondary entry point)
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [levelFilter, setLevelFilter] = useState<CefrLevel | "all">("all");
+  const [articleSource, setArticleSource] = useState<{ name: string; link: string } | null>(
+    null
+  );
+
+  // Vocab book (logged-in only; UI-signal only, real auth checks live server-side)
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+
   function clearTranslation() {
     if (translateTimerRef.current) {
       clearTimeout(translateTimerRef.current);
@@ -545,6 +640,34 @@ export default function Home() {
     };
   }, []);
 
+  // Best-effort: recommendations are a bonus entry point, never block or
+  // error out the core paste flow if the feed/classifier is unavailable.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/articles")
+      .then((res) => res.json())
+      .then((data: { articles?: Article[] }) => {
+        if (!cancelled && Array.isArray(data.articles)) setArticles(data.articles);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data: { email: string | null }) => {
+        if (!cancelled) setCurrentUserEmail(data.email);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function goToStage(next: Stage) {
     setStage(next);
     setStageKey((k) => k + 1);
@@ -557,6 +680,15 @@ export default function Home() {
     setTokens(tokenize(inputText));
     setSelectedWords(new Set());
     goToStage("select");
+  }
+
+  function handlePickArticle(article: Article) {
+    setInputText(article.summary);
+    setTokens(tokenize(article.summary));
+    setSelectedWords(new Set());
+    setArticleSource({ name: article.source, link: article.link });
+    goToStage("select");
+    void requestTranslate(article.summary);
   }
 
   // ── Stage 2 ────────────────────────────────────────────────────────────────
@@ -613,6 +745,24 @@ export default function Home() {
       });
       const data: VocabCard = await res.json();
       setVocabCard(data);
+      if (currentUserEmail) {
+        fetch("/api/vocab-entries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            word: data.word,
+            part_of_speech: data.part_of_speech,
+            cefr_level: data.cefr_level,
+            context_meaning_zh: data.context_meaning.zh,
+            context_explanation: data.context_meaning.explanation,
+            general_meaning_zh: data.general_meaning.zh,
+            general_meaning_en: data.general_meaning.en,
+            related_expressions: data.related_expressions,
+            original_sentence: data.original_sentence,
+            original_sentence_translation: data.original_sentence_translation,
+          }),
+        }).catch(() => {});
+      }
     } finally {
       setVocabLoading(false);
     }
@@ -667,6 +817,7 @@ export default function Home() {
     clearTranslation();
     setTokens([]);
     setSelectedWords(new Set());
+    setArticleSource(null);
     setStory("");
     setVocabWord(null);
     setVocabCard(null);
@@ -793,6 +944,16 @@ export default function Home() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15 1.65 1.65 0 0 0 3.17 14H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" strokeLinejoin="round" strokeLinecap="round" />
             </svg>
           </IconButton>
+          <Link
+            href={currentUserEmail ? "/vocab" : "/login"}
+            aria-label="生词本"
+            className="w-9 h-9 flex items-center justify-center rounded-full text-primary/70 hover:text-accent hover:bg-accent-light/30 transition-colors"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
         </div>
 
         {/* ════════════════════════════════════════════ Stage 1: Input */}
@@ -817,6 +978,13 @@ export default function Home() {
                 把你不会的词，变成更容易记住的故事
               </p>
             </div>
+
+            <ArticleRecommendations
+              articles={articles}
+              levelFilter={levelFilter}
+              onFilterChange={setLevelFilter}
+              onPick={handlePickArticle}
+            />
 
             <textarea
               className="flex-1 min-h-52 w-full resize-none rounded-[14px] border border-rim bg-surface px-4 py-3.5 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors shadow-[0_2px_10px_rgba(15,46,34,0.05)]"
@@ -853,6 +1021,19 @@ export default function Home() {
           <div key={stageKey} className="stage-enter contents">
             <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
               <p className={`${sectionLabel} mb-4`}>点击你不认识的词</p>
+              {articleSource && (
+                <p className="-mt-2.5 mb-4 text-xs text-muted">
+                  素材来自 {articleSource.name} ·{" "}
+                  <a
+                    href={articleSource.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    阅读原文 ↗
+                  </a>
+                </p>
+              )}
               {(translationLoading || translation || translationError) && (
                 <div className="mb-5">
                   <TranslationPanel
@@ -958,6 +1139,11 @@ export default function Home() {
                           {vocabCard.part_of_speech}
                         </span>
                       )}
+                      {vocabCard?.cefr_level && (
+                        <span className="text-xs font-semibold text-accent-deep px-2 py-0.5 rounded-full bg-accent-light/40">
+                          {vocabCard.cefr_level}
+                        </span>
+                      )}
                     </div>
                     <button
                       onClick={closeVocabCard}
@@ -995,6 +1181,19 @@ export default function Home() {
                           {vocabCard.general_meaning.en}
                         </p>
                       </div>
+                      {vocabCard.related_expressions && vocabCard.related_expressions.length > 0 && (
+                        <div className="border-t border-rim pt-4">
+                          <p className={`${sectionLabel} mb-2`}>联想表达</p>
+                          <div className="space-y-2">
+                            {vocabCard.related_expressions.map((expr, i) => (
+                              <div key={i}>
+                                <p className="text-[15px] text-ink leading-relaxed">{expr.es}</p>
+                                <p className="text-sm text-muted">{expr.zh}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

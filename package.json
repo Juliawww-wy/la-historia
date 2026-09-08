@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
+    "@neondatabase/serverless": "^1.1.0",
+    "jose": "^6.2.11",
     "next": "16.2.4",
     "openai": "^6.34.0",
     "react": "19.2.4",
@@ -23,6 +25,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }
