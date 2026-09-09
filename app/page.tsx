@@ -63,6 +63,12 @@ interface Article {
 // 在"全部"里能看到，只是没有专门的筛选按钮。
 const FILTERABLE_LEVELS: CefrLevel[] = ["A2", "B1", "B2", "C1"];
 
+type StoryLevel = "A2" | "B1" | "B2" | "C1";
+const STORY_LEVELS: StoryLevel[] = ["A2", "B1", "B2", "C1"];
+
+type StoryScenario = "校园" | "日常生活" | "旅行" | "留学" | "考试阅读";
+const STORY_SCENARIOS: StoryScenario[] = ["校园", "日常生活", "旅行", "留学", "考试阅读"];
+
 const PRESETS: { label: string; baseURL: string; model: string; hint: string }[] = [
   { label: "DeepSeek", baseURL: "https://api.deepseek.com/v1", model: "deepseek-chat", hint: "官方性价比之选" },
   { label: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-4o-mini", hint: "质量更稳定" },
@@ -103,7 +109,11 @@ function loadApiConfig(): ApiConfig | null {
 }
 
 function buildBookmarklet(origin: string): string {
-  const code = `(function(){var s=window.getSelection().toString();if(!s){alert('请先在网页上选中一段西班牙语文本');}else{window.open('${origin}/?text='+encodeURIComponent(s),'_blank');}})();`;
+  // window.open can get silently popup-blocked (common on Safari/iOS) — when
+  // that happens it returns null/undefined and the current tab just sits
+  // there looking like nothing happened. Fall back to navigating the
+  // current tab in that case so the flow always completes.
+  const code = `(function(){var s=window.getSelection().toString();if(!s){alert('请先在网页上选中一段西班牙语文本');}else{var u='${origin}/?text='+encodeURIComponent(s);var w=window.open(u,'_blank');if(!w){location.href=u;}}})();`;
   return `javascript:${encodeURIComponent(code)}`;
 }
 
@@ -480,6 +490,8 @@ export default function Home() {
   // Stage 2
   const [tokens, setTokens] = useState<Token[]>([]);
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
+  const [storyLevel, setStoryLevel] = useState<StoryLevel>("B1");
+  const [storyScenario, setStoryScenario] = useState<StoryScenario>("日常生活");
   const [storyLoading, setStoryLoading] = useState(false);
   const [storyError, setStoryError] = useState<string | null>(null);
 
@@ -713,8 +725,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           words: Array.from(selectedWords),
-          level: "B1",
+          level: storyLevel,
           genre: "故事",
+          scenario: storyScenario,
           apiConfig,
         }),
       });
@@ -729,14 +742,14 @@ export default function Home() {
     }
   }
 
-  // ── Stage 3 ────────────────────────────────────────────────────────────────
+  // ── Word lookup (select stage + story stage share this) ─────────────────────
 
-  async function handleWordClick(word: string) {
+  async function handleWordClick(word: string, sourceText: string) {
     if (vocabLoading) return;
     setVocabWord(word);
     setVocabCard(null);
     setVocabLoading(true);
-    const sentence = findSentenceContaining(story, word);
+    const sentence = findSentenceContaining(sourceText, word);
     try {
       const res = await fetch("/api/vocab-card", {
         method: "POST",
@@ -840,18 +853,21 @@ export default function Home() {
 
   function renderStory() {
     return tokenize(story).map((token, i) => {
-      if (token.kind === "word" && selectedWords.has(token.text.toLowerCase())) {
-        return (
-          <span
-            key={i}
-            onClick={() => handleWordClick(token.text)}
-            className="ink-squiggle cursor-pointer transition-opacity hover:opacity-70"
-          >
-            {token.text}
-          </span>
-        );
-      }
-      return <span key={i}>{token.text}</span>;
+      if (token.kind !== "word") return <span key={i}>{token.text}</span>;
+      const isTargetWord = selectedWords.has(token.text.toLowerCase());
+      return (
+        <span
+          key={i}
+          onClick={() => handleWordClick(token.text, story)}
+          className={`cursor-pointer rounded px-0.5 transition-colors ${
+            isTargetWord
+              ? "ink-squiggle hover:opacity-70"
+              : "hover:bg-primary-light/50"
+          }`}
+        >
+          {token.text}
+        </span>
+      );
     });
   }
 
@@ -1052,7 +1068,10 @@ export default function Home() {
                     return (
                       <span
                         key={i}
-                        onClick={() => toggleWord(token.text)}
+                        onClick={() => {
+                          toggleWord(token.text);
+                          void handleWordClick(token.text, inputText);
+                        }}
                         className={`cursor-pointer rounded px-0.5 transition-colors ${
                           selected
                             ? "bg-primary-light text-primary-deep font-semibold"
@@ -1072,6 +1091,42 @@ export default function Home() {
               {storyError && (
                 <p className="mb-2.5 text-xs text-[#B0503A] text-center">{storyError}</p>
               )}
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-xs text-muted">故事难度</span>
+                <div className="flex gap-1.5">
+                  {STORY_LEVELS.map((lvl) => (
+                    <button
+                      key={lvl}
+                      onClick={() => setStoryLevel(lvl)}
+                      className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                        storyLevel === lvl
+                          ? "border-primary bg-primary-light text-primary-deep"
+                          : "border-rim text-muted"
+                      }`}
+                    >
+                      {lvl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-muted">故事场景</span>
+                <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+                  {STORY_SCENARIOS.map((sc) => (
+                    <button
+                      key={sc}
+                      onClick={() => setStoryScenario(sc)}
+                      className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                        storyScenario === sc
+                          ? "border-primary bg-primary-light text-primary-deep"
+                          : "border-rim text-muted"
+                      }`}
+                    >
+                      {sc}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={handleGenerateStory}
                 disabled={selectedWords.size === 0 || storyLoading}
@@ -1114,91 +1169,6 @@ export default function Home() {
                 )}
               </button>
             </BottomBar>
-
-            {/* Vocab Card Bottom Sheet */}
-            {vocabWord && (
-              <div
-                className="fixed inset-0 z-50 flex items-end justify-center"
-                onClick={closeVocabCard}
-              >
-                <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
-
-                <div
-                  className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-12 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
-
-                  <div className="flex items-start justify-between mb-5">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-serif text-2xl font-bold text-primary-deep">
-                        {vocabWord}
-                      </span>
-                      {vocabCard && (
-                        <span className="text-sm text-muted px-2 py-0.5 rounded-full bg-primary-light">
-                          {vocabCard.part_of_speech}
-                        </span>
-                      )}
-                      {vocabCard?.cefr_level && (
-                        <span className="text-xs font-semibold text-accent-deep px-2 py-0.5 rounded-full bg-accent-light/40">
-                          {vocabCard.cefr_level}
-                        </span>
-                      )}
-                    </div>
-                    <button
-                      onClick={closeVocabCard}
-                      className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors text-base"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  {vocabLoading && (
-                    <div className="flex justify-center py-10">
-                      <Spinner />
-                    </div>
-                  )}
-
-                  {!vocabLoading && vocabCard && (
-                    <div className="space-y-4">
-                      <div>
-                        <p className={`${sectionLabel} mb-1`}>在本文中的意思</p>
-                        <p className="text-[15px] text-ink leading-relaxed">
-                          {vocabCard.context_meaning.zh}
-                        </p>
-                        {vocabCard.context_meaning.explanation && (
-                          <p className="mt-1 text-sm text-muted leading-relaxed">
-                            {vocabCard.context_meaning.explanation}
-                          </p>
-                        )}
-                      </div>
-                      <div className="border-t border-rim pt-4">
-                        <p className={`${sectionLabel} mb-1`}>常见含义</p>
-                        <p className="text-[15px] text-ink leading-relaxed">
-                          {vocabCard.general_meaning.zh}
-                        </p>
-                        <p className="mt-1 text-sm text-muted">
-                          {vocabCard.general_meaning.en}
-                        </p>
-                      </div>
-                      {vocabCard.related_expressions && vocabCard.related_expressions.length > 0 && (
-                        <div className="border-t border-rim pt-4">
-                          <p className={`${sectionLabel} mb-2`}>联想表达</p>
-                          <div className="space-y-2">
-                            {vocabCard.related_expressions.map((expr, i) => (
-                              <div key={i}>
-                                <p className="text-[15px] text-ink leading-relaxed">{expr.es}</p>
-                                <p className="text-sm text-muted">{expr.zh}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -1240,6 +1210,92 @@ export default function Home() {
             ) : (
               quiz.length > 0 && renderQuestion()
             )}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════ Vocab Card Bottom Sheet */}
+        {/* Shared by the select stage (any word) and the story stage (any word) */}
+        {vocabWord && (
+          <div
+            className="fixed inset-0 z-50 flex items-end justify-center"
+            onClick={closeVocabCard}
+          >
+            <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
+
+            <div
+              className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-12 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
+
+              <div className="flex items-start justify-between mb-5">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-serif text-2xl font-bold text-primary-deep">
+                    {vocabWord}
+                  </span>
+                  {vocabCard && (
+                    <span className="text-sm text-muted px-2 py-0.5 rounded-full bg-primary-light">
+                      {vocabCard.part_of_speech}
+                    </span>
+                  )}
+                  {vocabCard?.cefr_level && (
+                    <span className="text-xs font-semibold text-accent-deep px-2 py-0.5 rounded-full bg-accent-light/40">
+                      {vocabCard.cefr_level}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={closeVocabCard}
+                  className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors text-base"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {vocabLoading && (
+                <div className="flex justify-center py-10">
+                  <Spinner />
+                </div>
+              )}
+
+              {!vocabLoading && vocabCard && (
+                <div className="space-y-4">
+                  <div>
+                    <p className={`${sectionLabel} mb-1`}>在本文中的意思</p>
+                    <p className="text-[15px] text-ink leading-relaxed">
+                      {vocabCard.context_meaning.zh}
+                    </p>
+                    {vocabCard.context_meaning.explanation && (
+                      <p className="mt-1 text-sm text-muted leading-relaxed">
+                        {vocabCard.context_meaning.explanation}
+                      </p>
+                    )}
+                  </div>
+                  <div className="border-t border-rim pt-4">
+                    <p className={`${sectionLabel} mb-1`}>常见含义</p>
+                    <p className="text-[15px] text-ink leading-relaxed">
+                      {vocabCard.general_meaning.zh}
+                    </p>
+                    <p className="mt-1 text-sm text-muted">
+                      {vocabCard.general_meaning.en}
+                    </p>
+                  </div>
+                  {vocabCard.related_expressions && vocabCard.related_expressions.length > 0 && (
+                    <div className="border-t border-rim pt-4">
+                      <p className={`${sectionLabel} mb-2`}>联想表达</p>
+                      <div className="space-y-2">
+                        {vocabCard.related_expressions.map((expr, i) => (
+                          <div key={i}>
+                            <p className="text-[15px] text-ink leading-relaxed">{expr.es}</p>
+                            <p className="text-sm text-muted">{expr.zh}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveClient } from "../_lib/ai-client";
+import {
+  buildStorySystemPrompt,
+  buildStoryUserPrompt,
+  type StoryGenre,
+  type StoryLevel,
+  type StoryScenario,
+} from "../_lib/storyPrompts";
 
-const STORY_PROMPT = `You are a Spanish writing assistant for Chinese learners of Spanish.
-
-Given a list of vocabulary words, a proficiency level, and a genre, write a Spanish passage that:
-- Is exactly 150-200 words long
-- Naturally incorporates ALL the provided vocabulary words
-- Matches the difficulty of the specified level (A2: simple sentences and common vocabulary; B1: varied sentence structures and everyday topics; B2: complex sentences, nuanced expressions, and abstract topics)
-- Follows the specified genre (故事: narrative short story with characters and plot; 对话: dialogue between two or more people; 说明文: expository text explaining a concept or process)
-
-Return ONLY the Spanish passage text, with no title, no labels, no explanation, and no additional content.`;
+const STORY_LEVELS: StoryLevel[] = ["A2", "B1", "B2", "C1"];
+const STORY_GENRES: StoryGenre[] = ["故事", "对话", "说明文"];
+const STORY_SCENARIOS: StoryScenario[] = ["校园", "日常生活", "旅行", "留学", "考试阅读"];
 
 export async function POST(request: NextRequest) {
   try {
-    const { words, level, genre, apiConfig } = await request.json();
+    const { words, level, genre, scenario, apiConfig } = await request.json();
 
     if (!words || !Array.isArray(words) || words.length === 0) {
       return NextResponse.json(
@@ -21,30 +22,36 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (!level || !["A2", "B1", "B2"].includes(level)) {
+    if (!level || !STORY_LEVELS.includes(level)) {
       return NextResponse.json(
-        { error: 'level 必须是 "A2"、"B1" 或 "B2" 之一' },
+        { error: `level 必须是 ${STORY_LEVELS.join("、")} 之一` },
         { status: 400 }
       );
     }
-    if (!genre || !["故事", "对话", "说明文"].includes(genre)) {
+    if (!genre || !STORY_GENRES.includes(genre)) {
       return NextResponse.json(
-        { error: 'genre 必须是 "故事"、"对话" 或 "说明文" 之一' },
+        { error: `genre 必须是 ${STORY_GENRES.join("、")} 之一` },
+        { status: 400 }
+      );
+    }
+    if (!scenario || !STORY_SCENARIOS.includes(scenario)) {
+      return NextResponse.json(
+        { error: `scenario 必须是 ${STORY_SCENARIOS.join("、")} 之一` },
         { status: 400 }
       );
     }
 
     const { client, model } = resolveClient(apiConfig);
 
-    const userMessage =
-      `Level: ${level}\nGenre: ${genre}\nWords to include: ${words.join(", ")}`;
-
     const response = await client.chat.completions.create({
       model,
-      max_tokens: 512,
+      max_tokens: 500,
       messages: [
-        { role: "system", content: STORY_PROMPT },
-        { role: "user", content: userMessage },
+        {
+          role: "system",
+          content: buildStorySystemPrompt({ level, words, genre, scenario }),
+        },
+        { role: "user", content: buildStoryUserPrompt({ words, genre, scenario }) },
       ],
     });
 
