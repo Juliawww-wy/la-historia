@@ -364,6 +364,116 @@ function ArticleBoardDesktop({
   );
 }
 
+// ─── Vocab card body (shared by the mobile bottom sheet + desktop side panel) ─
+
+function VocabCardBody({ card }: { card: VocabCard }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className={`${sectionLabel} mb-1`}>在本文中的意思</p>
+        <p className="text-[15px] text-ink leading-relaxed">{card.context_meaning.zh}</p>
+        {card.context_meaning.explanation && (
+          <p className="mt-1 text-sm text-muted leading-relaxed">
+            {card.context_meaning.explanation}
+          </p>
+        )}
+      </div>
+      <div className="border-t border-rim pt-4">
+        <p className={`${sectionLabel} mb-1`}>常见含义</p>
+        <p className="text-[15px] text-ink leading-relaxed">{card.general_meaning.zh}</p>
+        <p className="mt-1 text-sm text-muted">{card.general_meaning.en}</p>
+      </div>
+      {card.related_expressions && card.related_expressions.length > 0 && (
+        <div className="border-t border-rim pt-4">
+          <p className={`${sectionLabel} mb-2`}>联想表达</p>
+          <div className="space-y-2">
+            {card.related_expressions.map((expr, i) => (
+              <div key={i}>
+                <p className="text-[15px] text-ink leading-relaxed">{expr.es}</p>
+                <p className="text-sm text-muted">{expr.zh}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SaveToVocabButton({ saved, onSave }: { saved: boolean; onSave: () => void }) {
+  return (
+    <button
+      onClick={onSave}
+      disabled={saved}
+      className={`mt-5 w-full rounded-[10px] border px-4 py-2.5 text-sm font-medium transition-colors ${
+        saved
+          ? "border-primary/40 bg-primary-light text-primary-deep cursor-default"
+          : "border-rim text-ink hover:border-primary/40 hover:bg-primary-light/30"
+      }`}
+    >
+      {saved ? "已存入生词库 ✓" : "加入生词库"}
+    </button>
+  );
+}
+
+/** Desktop-only persistent panel, replacing the bottom sheet on `lg:` for the
+ * select/story stages — sits beside the text instead of covering it. */
+function VocabSidePanel({
+  word,
+  card,
+  loading,
+  saved,
+  onSave,
+}: {
+  word: string | null;
+  card: VocabCard | null;
+  loading: boolean;
+  saved: boolean;
+  onSave: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col px-8 pt-20 pb-10 xl:px-10">
+      <div className="mx-auto w-full max-w-[360px]">
+        {!word && (
+          <p className="mt-10 text-center text-sm text-muted leading-relaxed">
+            点击左侧文本中的一个词查看释义；
+            <br />
+            也可以按住鼠标拖选一段短语，加入自己的语料库。
+          </p>
+        )}
+        {word && (
+          <div key={word} className="pop-enter">
+            <div className="mb-5 flex flex-wrap items-baseline gap-2">
+              <span className="font-serif text-2xl font-bold text-primary-deep">{word}</span>
+              {card && (
+                <span className="text-sm text-muted px-2 py-0.5 rounded-full bg-primary-light">
+                  {card.part_of_speech}
+                </span>
+              )}
+              {card?.cefr_level && (
+                <span className="text-xs font-semibold text-accent-deep px-2 py-0.5 rounded-full bg-accent-light/40">
+                  {card.cefr_level}
+                </span>
+              )}
+            </div>
+            {loading && (
+              <div className="flex justify-center py-10">
+                <Spinner />
+              </div>
+            )}
+            {!loading && card && (
+              <>
+                <VocabCardBody card={card} />
+                <SaveToVocabButton saved={saved} onSave={onSave} />
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Header icon buttons (settings / bookmarklet) ───────────────────────────
 
 function IconButton({
@@ -614,6 +724,13 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   const [vocabLoading, setVocabLoading] = useState(false);
   const [quizLoading, setQuizLoading] = useState(false);
 
+  // Word/phrase lookup cache + explicit save state (lookup and "save to vocab
+  // book" used to be bundled into one click — now separate, see
+  // handleWordClick / handleSaveCurrentToVocab / handleBulkSaveToVocab).
+  const vocabCardCacheRef = useRef<Record<string, VocabCard>>({});
+  const [panelSaved, setPanelSaved] = useState(false);
+  const [bulkSaveStatus, setBulkSaveStatus] = useState<"idle" | "saving" | "done">("idle");
+
   // Stage 4
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -624,6 +741,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   const [apiConfig, setApiConfig] = useState<ApiConfig | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bookmarkletOpen, setBookmarkletOpen] = useState(false);
+  const [loginPromptOpen, setLoginPromptOpen] = useState(false);
   const [origin, setOrigin] = useState("");
 
   // Article recommendations (Stage 1 secondary entry point) — hydrated
@@ -828,6 +946,19 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
       else next.add(key);
       return next;
     });
+    setBulkSaveStatus("idle");
+  }
+
+  function handleTextMouseUp() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+    const text = sel.toString().trim();
+    sel.removeAllRanges();
+    // Only treat a drag as a "phrase" when it spans more than one token —
+    // a plain click-to-toggle on a single word is handled separately, and
+    // we don't want the two gestures to fight over the same click.
+    if (!text || !/\s/.test(text)) return;
+    void handleWordClick(text, inputText);
   }
 
   async function handleGenerateStory() {
@@ -857,40 +988,35 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
     }
   }
 
-  // ── Word lookup (select stage + story stage share this) ─────────────────────
+  // ── Word/phrase lookup (select stage + story stage share this) ──────────────
+  // Lookup only fills the panel/sheet — it no longer writes to the vocab book
+  // by itself. Saving is now an explicit action (handleSaveCurrentToVocab /
+  // handleBulkSaveToVocab) so "look something up" and "keep it" are distinct.
+
+  async function fetchVocabCard(word: string, sourceText: string): Promise<VocabCard> {
+    const key = word.toLowerCase();
+    const cached = vocabCardCacheRef.current[key];
+    if (cached) return cached;
+    const sentence = findSentenceContaining(sourceText, word);
+    const res = await fetch("/api/vocab-card", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_word: word, original_sentence: sentence, apiConfig }),
+    });
+    const data: VocabCard = await res.json();
+    vocabCardCacheRef.current[key] = data;
+    return data;
+  }
 
   async function handleWordClick(word: string, sourceText: string) {
     if (vocabLoading) return;
     setVocabWord(word);
     setVocabCard(null);
+    setPanelSaved(false);
     setVocabLoading(true);
-    const sentence = findSentenceContaining(sourceText, word);
     try {
-      const res = await fetch("/api/vocab-card", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_word: word, original_sentence: sentence, apiConfig }),
-      });
-      const data: VocabCard = await res.json();
+      const data = await fetchVocabCard(word, sourceText);
       setVocabCard(data);
-      if (currentUserEmail) {
-        fetch("/api/vocab-entries", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            word: data.word,
-            part_of_speech: data.part_of_speech,
-            cefr_level: data.cefr_level,
-            context_meaning_zh: data.context_meaning.zh,
-            context_explanation: data.context_meaning.explanation,
-            general_meaning_zh: data.general_meaning.zh,
-            general_meaning_en: data.general_meaning.en,
-            related_expressions: data.related_expressions,
-            original_sentence: data.original_sentence,
-            original_sentence_translation: data.original_sentence_translation,
-          }),
-        }).catch(() => {});
-      }
     } finally {
       setVocabLoading(false);
     }
@@ -899,6 +1025,57 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   function closeVocabCard() {
     setVocabWord(null);
     setVocabCard(null);
+  }
+
+  async function saveVocabEntry(word: string, card: VocabCard) {
+    await fetch("/api/vocab-entries", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        word: card.word || word,
+        part_of_speech: card.part_of_speech,
+        cefr_level: card.cefr_level,
+        context_meaning_zh: card.context_meaning.zh,
+        context_explanation: card.context_meaning.explanation,
+        general_meaning_zh: card.general_meaning.zh,
+        general_meaning_en: card.general_meaning.en,
+        related_expressions: card.related_expressions,
+        original_sentence: card.original_sentence,
+        original_sentence_translation: card.original_sentence_translation,
+      }),
+    });
+  }
+
+  async function handleSaveCurrentToVocab() {
+    if (!vocabWord || !vocabCard || panelSaved) return;
+    if (!currentUserEmail) {
+      setLoginPromptOpen(true);
+      return;
+    }
+    try {
+      await saveVocabEntry(vocabWord, vocabCard);
+      setPanelSaved(true);
+    } catch {
+      // best-effort, same fire-and-forget tolerance as the rest of the vocab flow
+    }
+  }
+
+  async function handleBulkSaveToVocab() {
+    if (selectedWords.size === 0 || bulkSaveStatus === "saving") return;
+    if (!currentUserEmail) {
+      setLoginPromptOpen(true);
+      return;
+    }
+    setBulkSaveStatus("saving");
+    try {
+      for (const w of selectedWords) {
+        const card = await fetchVocabCard(w, inputText);
+        await saveVocabEntry(w, card);
+      }
+      setBulkSaveStatus("done");
+    } catch {
+      setBulkSaveStatus("idle");
+    }
   }
 
   async function handleGenerateQuiz() {
@@ -1059,7 +1236,9 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   return (
     <div
       className={`paper-grain min-h-screen bg-bg flex justify-center relative overflow-x-hidden ${
-        stage === "input" ? "lg:h-screen lg:overflow-hidden" : ""
+        stage === "input" || stage === "select" || stage === "story"
+          ? "lg:h-screen lg:overflow-hidden"
+          : ""
       }`}
     >
       {stage === "input" ? (
@@ -1071,18 +1250,26 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
             onPick={handlePickArticle}
           />
         </div>
-      ) : (
+      ) : stage === "quiz" ? (
         <DesktopMarginalia />
-      )}
+      ) : null}
 
       <div
         className={`flex justify-center w-full ${
-          stage === "input" ? "lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:px-6" : ""
+          stage === "input"
+            ? "lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:px-6"
+            : stage === "select" || stage === "story"
+            ? "lg:w-2/3 lg:h-screen lg:overflow-y-auto lg:px-6"
+            : ""
         }`}
       >
       <div
         className={`journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm ${
-          stage === "input" ? "lg:max-w-[480px]" : ""
+          stage === "input"
+            ? "lg:max-w-[480px]"
+            : stage === "select" || stage === "story"
+            ? "lg:max-w-[640px]"
+            : ""
         }`}
       >
 
@@ -1210,7 +1397,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
                   />
                 </div>
               )}
-              <div className="text-[15px] leading-9 text-ink">
+              <div className="text-[15px] leading-9 text-ink" onMouseUp={handleTextMouseUp}>
                 {tokens.map((token, i) => {
                   if (token.kind === "word") {
                     const selected = selectedWords.has(token.text.toLowerCase());
@@ -1276,20 +1463,38 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
                   ))}
                 </div>
               </div>
-              <button
-                onClick={handleGenerateStory}
-                disabled={selectedWords.size === 0 || storyLoading}
-                className={`${btnPrimary} flex items-center justify-center gap-2`}
-              >
-                {storyLoading ? (
-                  <>
-                    <Spinner light />
-                    <span>正在生成故事...</span>
-                  </>
-                ) : (
-                  `用这 ${selectedWords.size} 个词生成故事`
-                )}
-              </button>
+              <div className="flex gap-2.5">
+                <button
+                  onClick={handleGenerateStory}
+                  disabled={selectedWords.size === 0 || storyLoading}
+                  className={`${btnPrimary} flex-1 flex items-center justify-center gap-2`}
+                >
+                  {storyLoading ? (
+                    <>
+                      <Spinner light />
+                      <span>正在生成故事...</span>
+                    </>
+                  ) : (
+                    `生成故事（${selectedWords.size}）`
+                  )}
+                </button>
+                <button
+                  onClick={handleBulkSaveToVocab}
+                  disabled={selectedWords.size === 0 || bulkSaveStatus === "saving"}
+                  className={`${btnGhost} flex-1 flex items-center justify-center gap-2 disabled:opacity-40`}
+                >
+                  {bulkSaveStatus === "saving" ? (
+                    <>
+                      <Spinner />
+                      <span>存入中...</span>
+                    </>
+                  ) : bulkSaveStatus === "done" ? (
+                    "已存入生词库 ✓"
+                  ) : (
+                    "直接加入生词库"
+                  )}
+                </button>
+              </div>
             </BottomBar>
           </div>
         )}
@@ -1363,10 +1568,12 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         )}
 
         {/* ════════════════════════════════════════════ Vocab Card Bottom Sheet */}
-        {/* Shared by the select stage (any word) and the story stage (any word) */}
+        {/* Mobile only — lg: uses the persistent VocabSidePanel instead so the
+            text never gets covered. Shared by the select stage (any word) and
+            the story stage (any word). */}
         {vocabWord && (
           <div
-            className="fixed inset-0 z-50 flex items-end justify-center"
+            className="fixed inset-0 z-50 flex items-end justify-center lg:hidden"
             onClick={closeVocabCard}
           >
             <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
@@ -1408,41 +1615,10 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
               )}
 
               {!vocabLoading && vocabCard && (
-                <div className="space-y-4">
-                  <div>
-                    <p className={`${sectionLabel} mb-1`}>在本文中的意思</p>
-                    <p className="text-[15px] text-ink leading-relaxed">
-                      {vocabCard.context_meaning.zh}
-                    </p>
-                    {vocabCard.context_meaning.explanation && (
-                      <p className="mt-1 text-sm text-muted leading-relaxed">
-                        {vocabCard.context_meaning.explanation}
-                      </p>
-                    )}
-                  </div>
-                  <div className="border-t border-rim pt-4">
-                    <p className={`${sectionLabel} mb-1`}>常见含义</p>
-                    <p className="text-[15px] text-ink leading-relaxed">
-                      {vocabCard.general_meaning.zh}
-                    </p>
-                    <p className="mt-1 text-sm text-muted">
-                      {vocabCard.general_meaning.en}
-                    </p>
-                  </div>
-                  {vocabCard.related_expressions && vocabCard.related_expressions.length > 0 && (
-                    <div className="border-t border-rim pt-4">
-                      <p className={`${sectionLabel} mb-2`}>联想表达</p>
-                      <div className="space-y-2">
-                        {vocabCard.related_expressions.map((expr, i) => (
-                          <div key={i}>
-                            <p className="text-[15px] text-ink leading-relaxed">{expr.es}</p>
-                            <p className="text-sm text-muted">{expr.zh}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <>
+                  <VocabCardBody card={vocabCard} />
+                  <SaveToVocabButton saved={panelSaved} onSave={handleSaveCurrentToVocab} />
+                </>
               )}
             </div>
           </div>
@@ -1461,7 +1637,62 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         {bookmarkletOpen && origin && (
           <BookmarkletSheet origin={origin} onClose={() => setBookmarkletOpen(false)} />
         )}
+
+        {/* ════════════════════════════════════════════ Login Prompt Sheet */}
+        {loginPromptOpen && (
+          <LoginPromptSheet onClose={() => setLoginPromptOpen(false)} />
+        )}
       </div>
+      </div>
+
+      {(stage === "select" || stage === "story") && (
+        <div className="hidden lg:flex lg:w-1/3 lg:h-screen lg:flex-col lg:overflow-y-auto lg:border-l lg:border-rim/60">
+          <VocabSidePanel
+            word={vocabWord}
+            card={vocabCard}
+            loading={vocabLoading}
+            saved={panelSaved}
+            onSave={handleSaveCurrentToVocab}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Login Prompt Sheet ──────────────────────────────────────────────────────
+
+function LoginPromptSheet({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-primary-deep/20 backdrop-blur-[1px]" />
+      <div
+        className="sheet-enter relative w-full max-w-[430px] bg-surface rounded-t-2xl px-5 pt-6 pb-10 shadow-[0_-8px_32px_rgba(15,46,34,0.16)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-10 h-1 bg-rim rounded-full" />
+
+        <div className="flex items-start justify-between mb-1">
+          <h2 className="font-serif text-xl font-bold text-primary-deep">先登录再收藏</h2>
+          <button
+            onClick={onClose}
+            className="text-muted hover:text-ink w-7 h-7 flex items-center justify-center rounded-full hover:bg-primary-light transition-colors"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="text-sm text-muted leading-relaxed mb-5">
+          生词库是跟账号绑定的，登录后选的词才会被保存下来。选词、生成故事这些不受影响，随时都能用。
+        </p>
+
+        <div className="flex gap-2.5">
+          <button onClick={onClose} className={`${btnGhost} flex-1`}>
+            再看看
+          </button>
+          <Link href="/login" className={`${btnPrimary} flex-1 text-center`}>
+            去登录
+          </Link>
+        </div>
       </div>
     </div>
   );
