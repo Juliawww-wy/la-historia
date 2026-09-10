@@ -1255,7 +1255,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
       ) : null}
 
       <div
-        className={`flex justify-center w-full ${
+        className={`flex justify-center items-start w-full ${
           stage === "input"
             ? "lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:px-6"
             : stage === "select" || stage === "story"
