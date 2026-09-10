@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ClipboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent } from "react";
 import Link from "next/link";
 import { btnPrimary, btnGhost, sectionLabel, fieldClass } from "@/app/ui/shared";
 
@@ -498,9 +498,37 @@ function IconButton({
 
 // ─── Fixed bottom bar (shared between select & story stages) ───────────────
 
-function BottomBar({ children }: { children: React.ReactNode }) {
+function BottomBar({
+  children,
+  onHeightChange,
+}: {
+  children: React.ReactNode;
+  onHeightChange?: (height: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // BottomBar's own height varies with its content (error message, how many
+  // story-scenario pills wrap to a second line, etc.) — it previously wasn't
+  // measured at all, and the content above it used a static pb-* guess that
+  // silently went stale (and started clipping the last lines of text) the
+  // moment BottomBar's content changed. Report the real height instead so
+  // the scrollable content can reserve exactly enough clearance.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !onHeightChange) return;
+    onHeightChange(el.getBoundingClientRect().height);
+    const ro = new ResizeObserver((entries) => {
+      onHeightChange(entries[0].contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onHeightChange]);
+
   return (
-    <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-gradient-to-t from-bg via-bg/95 to-transparent pt-8 px-5 pb-6 lg:absolute lg:left-0 lg:right-0 lg:translate-x-0 lg:max-w-none">
+    <div
+      ref={ref}
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-gradient-to-t from-bg via-bg/95 to-transparent pt-8 px-5 pb-6 lg:absolute lg:left-0 lg:right-0 lg:translate-x-0 lg:max-w-none"
+    >
       {children}
     </div>
   );
@@ -716,6 +744,13 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   const [storyScenario, setStoryScenario] = useState<StoryScenario>("日常生活");
   const [storyLoading, setStoryLoading] = useState(false);
   const [storyError, setStoryError] = useState<string | null>(null);
+
+  // Real height of the fixed/absolute BottomBar (select & story stages), so
+  // the scrollable content above it can reserve exactly enough bottom
+  // clearance instead of guessing a static padding that goes stale whenever
+  // BottomBar's own content changes height.
+  const [bottomBarHeight, setBottomBarHeight] = useState(0);
+  const handleBottomBarHeight = useCallback((h: number) => setBottomBarHeight(h), []);
 
   // Stage 3
   const [story, setStory] = useState("");
@@ -1363,7 +1398,10 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         {/* ════════════════════════════════════════════ Stage 2: Select */}
         {stage === "select" && (
           <div key={stageKey} className="stage-enter contents">
-            <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
+            <div
+              className="flex flex-col flex-1 px-5 pt-20 pb-32"
+              style={bottomBarHeight ? { paddingBottom: bottomBarHeight + 32 } : undefined}
+            >
               <div className="flex items-center justify-between mb-4">
                 <p className={sectionLabel}>点击你不认识的词</p>
                 <button
@@ -1423,7 +1461,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
               </div>
             </div>
 
-            <BottomBar>
+            <BottomBar onHeightChange={handleBottomBarHeight}>
               {storyError && (
                 <p className="mb-2.5 text-xs text-[#B0503A] text-center">{storyError}</p>
               )}
@@ -1502,12 +1540,15 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         {/* ════════════════════════════════════════════ Stage 3: Story */}
         {stage === "story" && (
           <div key={stageKey} className="stage-enter contents">
-            <div className="flex flex-col flex-1 px-5 pt-20 pb-32">
+            <div
+              className="flex flex-col flex-1 px-5 pt-20 pb-32"
+              style={bottomBarHeight ? { paddingBottom: bottomBarHeight + 32 } : undefined}
+            >
               <p className={`${sectionLabel} mb-6`}>在新的语境里再认识这些词</p>
               <p className="font-serif text-[17px] leading-10 text-ink">{renderStory()}</p>
             </div>
 
-            <BottomBar>
+            <BottomBar onHeightChange={handleBottomBarHeight}>
               <button
                 onClick={handleGenerateQuiz}
                 disabled={quizLoading}
