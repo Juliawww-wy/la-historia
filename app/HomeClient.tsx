@@ -58,10 +58,7 @@ interface Article {
   publishedAt: string | null;
 }
 
-// A1（零基础）和 C2（母语级）暂不作为筛选项——目前的素材库覆盖不了这两头，
-// 强行提供筛选会让用户点进去发现没内容。文章本身仍可能被分到这两级，
-// 在"全部"里能看到，只是没有专门的筛选按钮。
-const FILTERABLE_LEVELS: CefrLevel[] = ["A2", "B1", "B2", "C1"];
+const FILTERABLE_LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
 type StoryLevel = "A2" | "B1" | "B2" | "C1";
 const STORY_LEVELS: StoryLevel[] = ["A2", "B1", "B2", "C1"];
@@ -182,19 +179,28 @@ function ArticleLevelFilter({
   levelFilter,
   onFilterChange,
   className = "",
+  size = "sm",
 }: {
   levelFilter: CefrLevel | "all";
   onFilterChange: (level: CefrLevel | "all") => void;
   className?: string;
+  size?: "sm" | "lg";
 }) {
+  const chipSize =
+    size === "lg" ? "px-4 py-1.5 text-sm font-semibold" : "px-3 py-1 text-xs font-medium";
+  // "lg" wraps onto multiple rows (desktop board, plenty of width); "sm" stays
+  // a single horizontally-scrollable row (mobile carousel). Overflow-x-auto
+  // and flex-wrap fight each other — a wrapping flex container with x-auto
+  // collapses to zero height in Chrome — so pick one behavior, not both.
+  const layout = size === "lg" ? "flex-wrap" : "flex-nowrap overflow-x-auto no-scrollbar";
   return (
-    <div className={`flex gap-1.5 overflow-x-auto no-scrollbar ${className}`}>
+    <div className={`flex gap-2 ${layout} ${className}`}>
       <button
         onClick={() => onFilterChange("all")}
-        className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+        className={`shrink-0 rounded-full border transition-colors ${chipSize} ${
           levelFilter === "all"
             ? "border-primary bg-primary-light text-primary-deep"
-            : "border-rim text-muted"
+            : "border-rim/80 text-muted hover:border-primary/40"
         }`}
       >
         全部
@@ -203,10 +209,10 @@ function ArticleLevelFilter({
         <button
           key={lvl}
           onClick={() => onFilterChange(lvl)}
-          className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+          className={`shrink-0 rounded-full border transition-colors ${chipSize} ${
             levelFilter === lvl
               ? "border-primary bg-primary-light text-primary-deep"
-              : "border-rim text-muted"
+              : "border-rim/80 text-muted hover:border-primary/40"
           }`}
         >
           {lvl}
@@ -268,11 +274,15 @@ function ArticleRecommendations({
 
       <ArticleLevelFilter levelFilter={levelFilter} onFilterChange={onFilterChange} className="mb-3" />
 
-      <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-5 px-5 pb-1">
-        {filtered.map((article) => (
-          <ArticleCard key={article.id} article={article} onPick={onPick} className="shrink-0 w-64" />
-        ))}
-      </div>
+      {filtered.length === 0 ? (
+        <p className="text-xs text-muted">这个难度暂时没有推荐文章，换个难度看看。</p>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-5 px-5 pb-1">
+          {filtered.map((article) => (
+            <ArticleCard key={article.id} article={article} onPick={onPick} className="shrink-0 w-64" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -332,12 +342,17 @@ function ArticleBoardDesktop({
 
   return (
     <div className="flex h-full flex-col px-8 pb-10 pt-12 xl:px-12">
-      <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted/70">
-        外刊精选 · 分级阅读
-      </p>
-      <ArticleLevelFilter levelFilter={levelFilter} onFilterChange={onFilterChange} className="mb-2 flex-wrap" />
+      <p className="mb-5 font-serif text-2xl font-bold text-primary-deep">外刊精选 · 分级阅读</p>
+      <ArticleLevelFilter
+        levelFilter={levelFilter}
+        onFilterChange={onFilterChange}
+        className="mb-6"
+        size="lg"
+      />
       {articles.length === 0 ? (
         <p className="mt-6 text-xs text-muted">暂无外刊推荐，请稍后再来看看。</p>
+      ) : filtered.length === 0 ? (
+        <p className="mt-6 text-xs text-muted">这个难度暂时没有推荐文章，换个难度看看。</p>
       ) : (
         <div className="flex flex-col">
           {filtered.map((article) => (
@@ -1061,10 +1076,13 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
       )}
 
       <div
-        className={`journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen ${
-          stage === "input"
-            ? "lg:max-w-none lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:my-0 lg:rounded-none"
-            : "lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm"
+        className={`flex justify-center w-full ${
+          stage === "input" ? "lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:px-6" : ""
+        }`}
+      >
+      <div
+        className={`journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm ${
+          stage === "input" ? "lg:max-w-[480px]" : ""
         }`}
       >
 
@@ -1443,6 +1461,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         {bookmarkletOpen && origin && (
           <BookmarkletSheet origin={origin} onClose={() => setBookmarkletOpen(false)} />
         )}
+      </div>
       </div>
     </div>
   );
