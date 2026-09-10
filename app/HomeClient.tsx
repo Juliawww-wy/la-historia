@@ -1621,22 +1621,26 @@ const BOOKMARK_GUIDES: Record<
 
 type ExtensionBrowser = "chrome" | "edge";
 
+const EXTENSION_DOWNLOAD_URL = "/la-historia-extension.zip";
+
 const EXTENSION_GUIDES: Record<ExtensionBrowser, { label: string; steps: string[] }> = {
   chrome: {
     label: "Chrome",
     steps: [
+      "下载插件压缩包并解压",
       "地址栏打开 chrome://extensions",
       "右上角开启「开发者模式」",
-      "点击「加载已解压的扩展程序」，选中项目仓库里的 extension 文件夹",
+      "点击「加载已解压的扩展程序」，选中解压出来的 la-historia-extension 文件夹",
       "以后在任意网页选中西语文本，右键点「用 La Historia 查词」即可自动跳回这里",
     ],
   },
   edge: {
     label: "Edge",
     steps: [
+      "下载插件压缩包并解压",
       "地址栏打开 edge://extensions",
       "左下角开启「开发人员模式」",
-      "点击「加载解压缩的扩展」，选中项目仓库里的 extension 文件夹",
+      "点击「加载解压缩的扩展」，选中解压出来的 la-historia-extension 文件夹",
       "以后在任意网页选中西语文本，右键点「用 La Historia 查词」即可自动跳回这里",
     ],
   },
@@ -1741,12 +1745,23 @@ function BookmarkletSheet({ origin, onClose }: { origin: string; onClose: () => 
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-light text-[11px] font-semibold text-primary">
                     {i + 1}
                   </span>
-                  <span>{step}</span>
+                  <span className="flex flex-1 flex-wrap items-center gap-2">
+                    <span>{step}</span>
+                    {i === 0 && (
+                      <a
+                        href={EXTENSION_DOWNLOAD_URL}
+                        download
+                        className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-primary-deep"
+                      >
+                        下载 .zip
+                      </a>
+                    )}
+                  </span>
                 </li>
               ))}
             </ol>
             <p className="mt-3 rounded-[8px] border border-accent/30 bg-accent-light/20 px-3 py-2 text-[11px] leading-relaxed text-ink">
-              插件源码在仓库的 extension/ 文件夹里，如果没有本地代码，找开发者要一份即可。iOS / Safari 暂不支持这种方式，请用「书签」方案。
+              下载解压后直接选那个文件夹即可，不用问开发者要代码。iOS / Safari 暂不支持这种方式，请用「书签」方案。
             </p>
           </>
         ) : (

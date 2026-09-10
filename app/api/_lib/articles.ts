@@ -30,6 +30,12 @@ export interface Article {
 const FEED_SOURCES: { name: string; url: string }[] = [
   { name: "BBC Mundo", url: "https://feeds.bbci.co.uk/mundo/rss.xml" },
   { name: "El Mundo", url: "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml" },
+  { name: "Infobae", url: "https://www.infobae.com/arc/outboundfeeds/rss/" },
+  { name: "ABC.es", url: "https://www.abc.es/rss/feeds/abcPortada.xml" },
+  { name: "La Vanguardia", url: "https://www.lavanguardia.com/rss/home.xml" },
+  { name: "20minutos", url: "https://www.20minutos.es/rss/" },
+  { name: "Xataka", url: "https://www.xataka.com/index.xml" },
+  { name: "Muy Interesante", url: "https://www.muyinteresante.com/feed/" },
 ];
 
 /** Cap items per feed so a single refresh never triggers a huge classify batch. */
@@ -167,7 +173,13 @@ function parseRssItems(xml: string, source: string): RawItem[] {
       if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString();
     }
 
-    items.push({ id: guid, source, title, summary, link, publishedAt });
+    // Some feeds (Muy Interesante among them) reuse one placeholder guid/link
+    // across many distinct items — fold the title in so the id stays unique
+    // per article instead of colliding and clobbering each other in the
+    // level/simplified caches (and as React keys).
+    const id = `${guid}::${title}`;
+
+    items.push({ id, source, title, summary, link, publishedAt });
   }
 
   return items;
@@ -203,43 +215,69 @@ function decodeEntities(s: string): string {
 
 const CLASSIFY_PROMPT = `You are a CEFR reading-difficulty classifier for Spanish texts, used by a Spanish-learning app for Chinese speakers.
 
-Given a JSON array of articles (each with an "id", a "title", and a "summary" in Spanish), classify the reading difficulty of EACH one as exactly one CEFR level: A1, A2, B1, B2, C1, or C2.
+Given a JSON array of articles (each with a numeric "id", a "title", and a "summary" in Spanish), classify the reading difficulty of EACH one as exactly one CEFR level: A1, A2, B1, B2, C1, or C2.
 
 Return ONLY a JSON array in this exact format, with no explanation, no markdown, and no code blocks:
-[{ "id": "...", "level": "B1" }]
+[{ "id": 0, "level": "B1" }]
 
-Every input id must appear exactly once in the output.`;
+Every input id must appear exactly once in the output, unchanged.`;
 
 function extractJson(raw: string): string {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   return (fenced ? fenced[1] : raw).trim();
 }
 
+/** More feeds means bigger classify/simplify batches — chunk them so one
+ *  oversized request (risking a truncated, unparseable response) can't wipe
+ *  out an entire refresh; a failed chunk just falls back to defaults for
+ *  its own items instead of every article in the batch. Simplify's batch is
+ *  much smaller than classify's: each item's output is a full rewritten
+ *  title+summary (~150-250 tokens) vs. classify's one-word level label. */
+const CLASSIFY_BATCH_SIZE = 40;
+const SIMPLIFY_BATCH_SIZE = 10;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 async function classifyLevels(
   items: RawItem[]
 ): Promise<Map<string, CefrLevel>> {
   const { client, model } = resolveClient(undefined);
-
-  const userMessage = JSON.stringify(
-    items.map((it) => ({ id: it.id, title: it.title, summary: it.summary }))
-  );
-
-  const response = await client.chat.completions.create({
-    model,
-    max_tokens: 1024,
-    messages: [
-      { role: "system", content: CLASSIFY_PROMPT },
-      { role: "user", content: userMessage },
-    ],
-  });
-
-  const raw = response.choices[0].message.content ?? "";
-  const parsed = JSON.parse(extractJson(raw)) as { id: string; level: string }[];
-
   const result = new Map<string, CefrLevel>();
-  for (const row of parsed) {
-    if (typeof row.id === "string" && CEFR_LEVELS.includes(row.level as CefrLevel)) {
-      result.set(row.id, row.level as CefrLevel);
+
+  for (const batch of chunk(items, CLASSIFY_BATCH_SIZE)) {
+    try {
+      // Send a short per-batch index instead of the real id: real ids now
+      // fold in the article title for uniqueness (see parseRssItems) and
+      // can run long, and the model echoes every id back — round-tripping
+      // the full id for 40 items was inflating output enough to get cut off
+      // mid-JSON by max_tokens on some batches.
+      const userMessage = JSON.stringify(
+        batch.map((it, i) => ({ id: i, title: it.title, summary: it.summary }))
+      );
+
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: 3072,
+        messages: [
+          { role: "system", content: CLASSIFY_PROMPT },
+          { role: "user", content: userMessage },
+        ],
+      });
+
+      const raw = response.choices[0].message.content ?? "";
+      const parsed = JSON.parse(extractJson(raw)) as { id: number; level: string }[];
+      for (const row of parsed) {
+        const item = batch[row.id];
+        if (item && CEFR_LEVELS.includes(row.level as CefrLevel)) {
+          result.set(item.id, row.level as CefrLevel);
+        }
+      }
+    } catch (err) {
+      console.error("外刊 CEFR 分级批次失败，该批次降级为默认难度:", err);
     }
   }
   return result;
@@ -249,7 +287,7 @@ async function classifyLevels(
 
 const SIMPLIFY_PROMPT = `You are a Spanish-for-beginners writing assistant, used by a Spanish-learning app for Chinese speakers.
 
-Given a JSON array of real news items (each with an "id", a "title", and a "summary" in Spanish), rewrite EACH one as a short, genuinely simple version for A1/A2 learners:
+Given a JSON array of real news items (each with a numeric "id", a "title", and a "summary" in Spanish), rewrite EACH one as a short, genuinely simple version for A1/A2 learners:
 - Write in your OWN words — do not copy phrases directly from the input. This is a fresh paraphrase, not an excerpt.
 - 2-3 short sentences, present tense where possible, everyday high-frequency vocabulary, no subjunctive or complex subordination.
 - Keep the core fact/topic recognizable, drop nuance and detail that requires advanced vocabulary.
@@ -257,51 +295,60 @@ Given a JSON array of real news items (each with an "id", a "title", and a "summ
 - Report which of the two levels it ended up at: "A1" or "A2".
 
 Return ONLY a JSON array in this exact format, with no explanation, no markdown, and no code blocks:
-[{ "id": "...", "level": "A2", "title": "...", "summary": "..." }]
+[{ "id": 0, "level": "A2", "title": "...", "summary": "..." }]
 
-Every input id must appear exactly once in the output.`;
+Every input id must appear exactly once in the output, unchanged.`;
 
 async function simplifyForLearners(
   items: RawItem[]
 ): Promise<Map<string, SimplifiedItem>> {
   const { client, model } = resolveClient(undefined);
-
-  const userMessage = JSON.stringify(
-    items.map((it) => ({ id: it.id, title: it.title, summary: it.summary }))
-  );
-
-  const response = await client.chat.completions.create({
-    model,
-    max_tokens: 2048,
-    messages: [
-      { role: "system", content: SIMPLIFY_PROMPT },
-      { role: "user", content: userMessage },
-    ],
-  });
-
-  const raw = response.choices[0].message.content ?? "";
-  const parsed = JSON.parse(extractJson(raw)) as {
-    id: string;
-    level: string;
-    title: string;
-    summary: string;
-  }[];
-
   const result = new Map<string, SimplifiedItem>();
-  for (const row of parsed) {
-    if (
-      typeof row.id === "string" &&
-      BEGINNER_LEVELS.includes(row.level as CefrLevel) &&
-      typeof row.title === "string" &&
-      row.title.trim() &&
-      typeof row.summary === "string" &&
-      row.summary.trim()
-    ) {
-      result.set(row.id, {
-        level: row.level as CefrLevel,
-        title: row.title.trim(),
-        summary: row.summary.trim(),
+
+  for (const batch of chunk(items, SIMPLIFY_BATCH_SIZE)) {
+    try {
+      // Short per-batch index instead of the real id — see the matching
+      // comment in classifyLevels for why.
+      const userMessage = JSON.stringify(
+        batch.map((it, i) => ({ id: i, title: it.title, summary: it.summary }))
+      );
+
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: 4096,
+        messages: [
+          { role: "system", content: SIMPLIFY_PROMPT },
+          { role: "user", content: userMessage },
+        ],
       });
+
+      const raw = response.choices[0].message.content ?? "";
+      const parsed = JSON.parse(extractJson(raw)) as {
+        id: number;
+        level: string;
+        title: string;
+        summary: string;
+      }[];
+
+      for (const row of parsed) {
+        const item = batch[row.id];
+        if (
+          item &&
+          BEGINNER_LEVELS.includes(row.level as CefrLevel) &&
+          typeof row.title === "string" &&
+          row.title.trim() &&
+          typeof row.summary === "string" &&
+          row.summary.trim()
+        ) {
+          result.set(item.id, {
+            level: row.level as CefrLevel,
+            title: row.title.trim(),
+            summary: row.summary.trim(),
+          });
+        }
+      }
+    } catch (err) {
+      console.error("外刊 AI 简写批次失败，跳过该批次:", err);
     }
   }
   return result;
