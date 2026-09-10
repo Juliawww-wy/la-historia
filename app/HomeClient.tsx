@@ -279,6 +279,43 @@ function ArticleRecommendations({
 
 /** Desktop-only left column on the input stage — a real article board instead
  * of the mobile horizontal scroller, since there's room for a full list. */
+/** Row in the desktop article board — a horizontal slide-in wipe on hover
+ * (pure CSS group-hover, no JS mouse tracking / cursor trail). */
+function ArticleRow({
+  article,
+  onPick,
+}: {
+  article: Article;
+  onPick: (article: Article) => void;
+}) {
+  return (
+    <button
+      onClick={() => onPick(article)}
+      className="group relative flex w-full items-center gap-4 overflow-hidden border-b border-rim/60 py-5 text-left"
+    >
+      <span
+        className="absolute inset-0 -translate-x-full bg-primary-light/50 transition-transform duration-500 ease-out group-hover:translate-x-0"
+        aria-hidden="true"
+      />
+      <span className="relative z-10 min-w-0 flex-1">
+        <span className="mb-1 flex items-center gap-2">
+          <span className="shrink-0 rounded-full bg-accent-light/40 text-accent-deep px-2 py-0.5 text-[10px] font-semibold">
+            {article.level}
+          </span>
+          <span className="truncate text-[11px] text-muted">{article.source}</span>
+        </span>
+        <span className="block truncate font-serif text-[15px] font-semibold text-ink leading-snug transition-colors group-hover:text-primary-deep">
+          {article.title}
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted">{article.summary}</span>
+      </span>
+      <span className="relative z-10 shrink-0 -translate-x-2 text-muted opacity-0 transition-all duration-300 group-hover:translate-x-0 group-hover:opacity-100">
+        →
+      </span>
+    </button>
+  );
+}
+
 function ArticleBoardDesktop({
   articles,
   levelFilter,
@@ -290,22 +327,24 @@ function ArticleBoardDesktop({
   onFilterChange: (level: CefrLevel | "all") => void;
   onPick: (article: Article) => void;
 }) {
-  if (articles.length === 0) return null;
-
   const filtered =
     levelFilter === "all" ? articles : articles.filter((a) => a.level === levelFilter);
 
   return (
-    <div className="marginalia-enter">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-muted/70 mb-3">
+    <div className="flex h-full flex-col px-8 pb-10 pt-12 xl:px-12">
+      <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted/70">
         外刊精选 · 分级阅读
       </p>
-      <ArticleLevelFilter levelFilter={levelFilter} onFilterChange={onFilterChange} className="mb-4 flex-wrap" />
-      <div className="flex flex-col gap-3 max-h-[64vh] overflow-y-auto pr-1 -mr-1">
-        {filtered.map((article) => (
-          <ArticleCard key={article.id} article={article} onPick={onPick} className="bg-surface/90" />
-        ))}
-      </div>
+      <ArticleLevelFilter levelFilter={levelFilter} onFilterChange={onFilterChange} className="mb-2 flex-wrap" />
+      {articles.length === 0 ? (
+        <p className="mt-6 text-xs text-muted">暂无外刊推荐，请稍后再来看看。</p>
+      ) : (
+        <div className="flex flex-col">
+          {filtered.map((article) => (
+            <ArticleRow key={article.id} article={article} onPick={onPick} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1003,12 +1042,13 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="paper-grain min-h-screen bg-bg flex justify-center relative overflow-x-hidden">
+    <div
+      className={`paper-grain min-h-screen bg-bg flex justify-center relative overflow-x-hidden ${
+        stage === "input" ? "lg:h-screen lg:overflow-hidden" : ""
+      }`}
+    >
       {stage === "input" ? (
-        <div
-          className="pointer-events-auto absolute hidden lg:block top-28 w-80 xl:w-[22rem] left-[max(1.5rem,calc(50%-430px/2-25rem))] xl:left-[max(2rem,calc(50%-430px/2-27rem))]"
-          aria-hidden={articles.length === 0}
-        >
+        <div className="hidden lg:flex lg:w-1/2 lg:h-screen lg:flex-col lg:overflow-y-auto lg:border-r lg:border-rim/60">
           <ArticleBoardDesktop
             articles={articles}
             levelFilter={levelFilter}
@@ -1020,7 +1060,13 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
         <DesktopMarginalia />
       )}
 
-      <div className="journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm">
+      <div
+        className={`journal-page relative z-10 w-full max-w-[430px] flex flex-col min-h-screen ${
+          stage === "input"
+            ? "lg:max-w-none lg:w-1/2 lg:h-screen lg:overflow-y-auto lg:my-0 lg:rounded-none"
+            : "lg:my-8 lg:min-h-[calc(100vh-4rem)] lg:rounded-sm"
+        }`}
+      >
 
         {/* Header: settings + bookmarklet, present on every stage */}
         <div className="absolute top-4 right-4 z-20 flex gap-1">
@@ -1049,7 +1095,7 @@ export default function HomeClient({ initialArticles }: { initialArticles: Artic
 
         {/* ════════════════════════════════════════════ Stage 1: Input */}
         {stage === "input" && (
-          <div key={stageKey} className="stage-enter flex flex-col flex-1 px-5 pt-20 pb-8 gap-7">
+          <div key={stageKey} className="stage-enter flex flex-col flex-1 px-5 pt-20 pb-8 gap-7 lg:px-10">
             <div>
               <h1 className="font-serif text-[52px] font-bold leading-[0.95] tracking-tight text-primary-deep">
                 La Historia
