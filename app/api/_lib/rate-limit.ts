@@ -31,14 +31,20 @@ export function rateLimit(
   return { ok: true };
 }
 
-/** Best-effort client key from common reverse-proxy headers. */
-export function clientKeyFromRequest(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
+/** Best-effort client key from common reverse-proxy headers — takes a plain
+ * header getter so it works from a Request/NextRequest and equally from
+ * next/headers() inside a Server Action (neither is a Request instance). */
+export function clientKeyFromHeaderGetter(getHeader: (name: string) => string | null): string {
+  const forwarded = getHeader("x-forwarded-for");
   if (forwarded) {
     const first = forwarded.split(",")[0]?.trim();
     if (first) return first;
   }
-  const realIp = request.headers.get("x-real-ip")?.trim();
+  const realIp = getHeader("x-real-ip")?.trim();
   if (realIp) return realIp;
   return "anonymous";
+}
+
+export function clientKeyFromRequest(request: Request): string {
+  return clientKeyFromHeaderGetter((name) => request.headers.get(name));
 }
