@@ -623,6 +623,16 @@ export default function Home() {
 
   // ── Boot: load saved API config, load ?text= from bookmarklet ─────────────
 
+  function importIncomingText(incoming: string) {
+    if (!incoming.trim()) return;
+    setInputText(incoming);
+    setTokens(tokenize(incoming));
+    setSelectedWords(new Set());
+    setStage("select");
+    setStageKey((k) => k + 1);
+    void requestTranslate(incoming);
+  }
+
   useEffect(() => {
     // One-time hydration from localStorage / URL on mount — safe by
     // construction (empty dep array, runs once), just noisy under the
@@ -634,15 +644,21 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const incoming = params.get("text");
     if (incoming && incoming.trim()) {
-      setInputText(incoming);
-      setTokens(tokenize(incoming));
-      setSelectedWords(new Set());
-      setStage("select");
-      setStageKey((k) => k + 1);
       window.history.replaceState({}, "", window.location.pathname);
-      void requestTranslate(incoming);
+      importIncomingText(incoming);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only boot
+  }, []);
+
+  // ── 划词导入扩展：通过 CustomEvent 从 content script 接收选中文本 ─────────
+  useEffect(() => {
+    function handleExtensionImport(e: Event) {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (text && text.trim()) importIncomingText(text);
+    }
+    window.addEventListener("la-historia:import", handleExtensionImport);
+    return () => window.removeEventListener("la-historia:import", handleExtensionImport);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable listener, mount-only
   }, []);
 
   useEffect(() => {

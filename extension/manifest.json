@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "La Historia 划词导入",
+  "version": "1.0.0",
+  "description": "在任意网页选中西班牙语文本，右键一键发送到 La Historia 查词。",
+  "permissions": ["contextMenus", "storage", "tabs"],
+  "host_permissions": [
+    "https://la-historia.vercel.app/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://la-historia.vercel.app/*", "http://localhost:3000/*"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
