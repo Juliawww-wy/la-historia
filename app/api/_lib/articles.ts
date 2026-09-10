@@ -149,7 +149,25 @@ async function fetchFeed(feed: { name: string; url: string }): Promise<RawItem[]
   });
   if (!res.ok) throw new Error(`${feed.name} 返回 ${res.status}`);
   const xml = await res.text();
-  return parseRssItems(xml, feed.name).slice(0, ITEMS_PER_FEED);
+  // Some feeds (ABC.es among them) repeat the exact same story several times
+  // in one pull — identical headline, only a rotating illustration image
+  // changes. Drop repeats before the per-feed cap so ITEMS_PER_FEED isn't
+  // mostly spent on one story shown five or six times over (which also used
+  // to produce duplicate ids/React keys downstream, since guid/link differ
+  // per repeat but the title doesn't).
+  return dedupeByTitle(parseRssItems(xml, feed.name)).slice(0, ITEMS_PER_FEED);
+}
+
+function dedupeByTitle(items: RawItem[]): RawItem[] {
+  const seen = new Set<string>();
+  const out: RawItem[] = [];
+  for (const it of items) {
+    const key = it.title.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+  return out;
 }
 
 function parseRssItems(xml: string, source: string): RawItem[] {
@@ -194,7 +212,15 @@ function extractTag(block: string, tag: string): string {
 }
 
 function cleanText(raw: string): string {
-  return decodeEntities(raw.replace(/<[^>]+>/g, " "))
+  // Decode entities BEFORE stripping tags, not after: some feeds (ABC.es
+  // among them) double-escape markup inside a non-CDATA <description> (e.g.
+  // "&lt;img ...&gt;Actual text"). Stripping literal "<...>" first misses
+  // that, since at that point it's still the multi-char sequence "&lt;...";
+  // decoding it afterward then reconstitutes the tag as real, visible "<img
+  // ...>" text in the output. Decoding first normalizes both cases to real
+  // "<...>" so the strip step actually catches it.
+  return decodeEntities(raw)
+    .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
